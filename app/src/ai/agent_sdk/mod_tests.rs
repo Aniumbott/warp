@@ -126,15 +126,13 @@ fn factory_plan_is_authoritative_and_still_validates_checkout_overrides() {
         "platform/backend".to_string(),
         "api".to_string(),
     );
-    let deferred = SourceRepo::new(
-        CodeForge::GitHub,
-        "acme".to_string(),
-        "on-demand".to_string(),
-    );
-    options.repository_sources = RunRepositorySources::FactoryPlan {
-        eager: vec![eager.clone()],
-        deferred: vec![deferred],
-    };
+    let snapshot: AgentConfigSnapshot = serde_json::from_value(json!({
+        "additional_source_repos": [{"code_forge": "GITHUB", "owner": "acme", "repo": "webhook"}],
+        "source_repos_to_clone": [{"code_forge": "GITLAB", "owner": "platform/backend", "repo": "api"}],
+        "deferred_source_repos": [{"code_forge": "GITHUB", "owner": "acme", "repo": "on-demand"}]
+    }))
+    .unwrap();
+    options.repository_sources = snapshot.repositories.into_sources();
     options.repository_preparation_overrides = vec![RepositoryPreparationOverride {
         code_forge: RepositoryForge::GitLab,
         repo_owner: "platform/backend".to_string(),

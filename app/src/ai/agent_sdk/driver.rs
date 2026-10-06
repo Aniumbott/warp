@@ -15,6 +15,7 @@ use ai::skills::{
 };
 use anyhow::{Context as _, anyhow};
 use chrono::{DateTime, Utc};
+pub use cloud_object_models::RunRepositorySources;
 use futures::FutureExt as _;
 use futures::channel::oneshot;
 use futures::future::{self, Either, FusedFuture, join_all};
@@ -594,46 +595,17 @@ pub enum ResumeOptions {
     Oz(Box<ConversationRestorationInNewPaneType>),
     ThirdParty(Box<ResumePayload>),
 }
-/// Repository membership for one run; Factory plans cannot carry legacy additions.
-#[derive(Clone)]
-pub enum RunRepositorySources {
-    Legacy {
-        additional: Vec<SourceRepo>,
-    },
-    FactoryPlan {
-        eager: Vec<SourceRepo>,
-        deferred: Vec<SourceRepo>,
-    },
-}
-impl Default for RunRepositorySources {
-    fn default() -> Self {
-        Self::Legacy {
-            additional: Vec::new(),
-        }
-    }
-}
 
-impl RunRepositorySources {
-    pub(super) fn eager_repos(
-        &self,
-        environment: Option<&AmbientAgentEnvironment>,
-    ) -> Result<Vec<SourceRepo>, PrepareEnvironmentError> {
-        match self {
-            Self::Legacy { additional } => {
-                environment::resolve_eager_source_repos(environment, None, additional.clone())
-            }
-            Self::FactoryPlan { eager, .. } => environment::resolve_eager_source_repos(
-                environment,
-                Some(eager.clone()),
-                Vec::new(),
-            ),
+pub(super) fn eager_source_repos(
+    sources: &RunRepositorySources,
+    environment: Option<&AmbientAgentEnvironment>,
+) -> Result<Vec<SourceRepo>, PrepareEnvironmentError> {
+    match sources {
+        RunRepositorySources::Legacy { additional } => {
+            environment::resolve_eager_source_repos(environment, None, additional.clone())
         }
-    }
-
-    fn deferred_repos(&self) -> &[SourceRepo] {
-        match self {
-            Self::FactoryPlan { deferred, .. } => deferred,
-            Self::Legacy { .. } => &[],
+        RunRepositorySources::FactoryPlan { eager, .. } => {
+            environment::resolve_eager_source_repos(environment, Some(eager.clone()), Vec::new())
         }
     }
 }
@@ -2358,7 +2330,8 @@ impl AgentDriver {
                     &mut setup_commands,
                     session_shell_type,
                 );
-                let source_repos = repository_sources.eager_repos(environment_opt.as_ref())?;
+                let source_repos =
+                    eager_source_repos(&repository_sources, environment_opt.as_ref())?;
                 if let Some(instruction) = environment::build_deferred_repos_instruction(
                     &foreground.spawn(|me, _| me.working_dir.clone()).await?,
                     &source_repos,
