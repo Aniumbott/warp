@@ -85,7 +85,6 @@ fn null_plan_retains_legacy_sources_and_ignores_orphan_deferred_repos() {
         })
     );
     let sources = snapshot.repositories.into_sources();
-    assert!(sources.deferred_repos().is_empty());
     assert_eq!(
         sources,
         RunRepositorySources::Legacy {

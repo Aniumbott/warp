@@ -10,12 +10,11 @@ use std::thread;
 use std::time::{Duration, SystemTime};
 
 use ai::skills::{
-    ParsedSkill, SKILL_PROVIDER_DEFINITIONS, SkillProvider, SkillScope, parse_bundled_skill,
-    parse_skills_dirs_env, read_skills_for_skills_dirs, resolve_skills_dirs,
+    ParsedSkill, SKILL_PROVIDER_DEFINITIONS, SkillProvider, SkillScope, WARP_SKILL_DIRS_ENV,
+    parse_bundled_skill, parse_skills_dirs_env, read_skills_for_skills_dirs, resolve_skills_dirs,
 };
 use anyhow::{Context as _, anyhow};
 use chrono::{DateTime, Utc};
-pub use cloud_object_models::RunRepositorySources;
 use futures::FutureExt as _;
 use futures::channel::oneshot;
 use futures::future::{self, Either, FusedFuture, join_all};
@@ -26,7 +25,7 @@ use repo_metadata::{RepoMetadataModel, RepositoryIdentifier};
 use session_sharing_protocol::sharer::SessionRetentionReason;
 use tracing::Instrument as _;
 use uuid::Uuid;
-use warp_cli::agent::{Harness, OutputFormat, RepositoryPreparationOverride};
+use warp_cli::agent::{Harness, OutputFormat};
 use warp_cli::mcp::MCPSpec;
 use warp_cli::share::ShareRequest;
 use warp_cli::skill::SkillSpec;
@@ -77,9 +76,7 @@ use crate::ai::blocklist::{
     BlocklistAIHistoryEvent, BlocklistAIHistoryModel, ConversationStatusUpdate, FinalizeReason,
     QueuedQueryEvent, QueuedQueryModel, finalize_recording_for_conversation,
 };
-use crate::ai::cloud_environments::{
-    AmbientAgentEnvironment, CloudAmbientAgentEnvironment, GithubRepo, SourceRepo,
-};
+use crate::ai::cloud_environments::{CloudAmbientAgentEnvironment, GithubRepo, SourceRepo};
 use crate::ai::document::ai_document_model::{AIDocumentModel, AIDocumentModelEvent};
 use crate::ai::execution_profiles::profiles::AIExecutionProfilesModel;
 use crate::ai::llms::{LLMId, LLMPreferences};
@@ -596,20 +593,6 @@ pub enum ResumeOptions {
     ThirdParty(Box<ResumePayload>),
 }
 
-pub(super) fn eager_source_repos(
-    sources: &RunRepositorySources,
-    environment: Option<&AmbientAgentEnvironment>,
-) -> Result<Vec<SourceRepo>, PrepareEnvironmentError> {
-    match sources {
-        RunRepositorySources::Legacy { additional } => {
-            environment::resolve_eager_source_repos(environment, None, additional.clone())
-        }
-        RunRepositorySources::FactoryPlan { eager, .. } => {
-            environment::resolve_eager_source_repos(environment, Some(eager.clone()), Vec::new())
-        }
-    }
-}
-
 /// Options for initializing the agent driver.
 pub struct AgentDriverOptions {
     /// Initial working directory for the agent's terminal session.
@@ -636,13 +619,9 @@ pub struct AgentDriverOptions {
     pub resume: Option<ResumeOptions>,
     /// Cloud providers to configure within the agent's session.
     pub cloud_providers: Vec<Box<dyn cloud_provider::CloudProvider>>,
-    /// Resolved environment configuration, if any.
-    pub environment: Option<AmbientAgentEnvironment>,
-    pub repository_sources: RunRepositorySources,
-    /// Server-owned repository preparation overrides for the agent's session.
-    pub repository_preparation_overrides: Vec<RepositoryPreparationOverride>,
-    /// Whether origin remotes should be removed from environment repositories.
-    pub remove_repository_origins: bool,
+    pub workspace: environment::WorkspaceConfiguration,
+    pub factory_skill_dirs: Option<Vec<PathBuf>>,
+    pub computer_use_config: Option<(bool, Option<LLMId>)>,
     /// Selected execution harness for this run.
     pub selected_harness: Harness,
     /// Model config for the selected harness. Only used for non-Oz harnesses.
@@ -736,11 +715,9 @@ pub struct AgentDriver {
     /// Cloud providers set up within this driver session.
     cloud_providers: Vec<Box<dyn cloud_provider::CloudProvider>>,
 
-    /// Resolved environment configuration.
-    environment: Option<AmbientAgentEnvironment>,
-    repository_sources: RunRepositorySources,
-    repository_preparation_overrides: Vec<RepositoryPreparationOverride>,
-    remove_repository_origins: bool,
+    workspace: Option<environment::WorkspaceConfiguration>,
+    factory_skill_dirs: Option<Vec<PathBuf>>,
+    computer_use_configured: bool,
 
     // End-of-run snapshot upload controls.
     snapshot_disabled: bool,
@@ -842,16 +819,7 @@ pub enum AgentRunPrompt {
     },
 }
 
-/// Injects the deferred-repositories hidden instruction into `prompt` so every harness
-/// receives it before the first model turn, without mutating any user-authored Agent or
-/// Automation source.
-///
-/// For a `Local` prompt, the instruction is prepended directly since there is no separate
-/// hidden channel. For a `ServerSide` prompt, it rides the existing `skill` slot: `runtime_skill`
-/// is already documented as content sent to the LLM but hidden from the UI query bubble, and the
-/// same skill content is what `prepare_harness` forwards to `resolve_prompt` to build a
-/// third-party harness's system prompt. When a real skill was also requested, the instruction is
-/// prepended to its content rather than replacing it.
+/// Prepends runtime inventory instructions without replacing an attached skill.
 fn inject_deferred_repos_instruction(prompt: &mut AgentRunPrompt, instruction: String) {
     match prompt {
         AgentRunPrompt::Local(text) => *text = format!("{instruction}\n\n{text}"),
@@ -1139,10 +1107,9 @@ impl AgentDriver {
             secrets,
             resume,
             cloud_providers,
-            environment,
-            repository_sources,
-            repository_preparation_overrides,
-            remove_repository_origins,
+            workspace,
+            factory_skill_dirs,
+            computer_use_config,
             selected_harness,
             third_party_harness_model_config,
             team_scope,
@@ -1207,7 +1174,13 @@ impl AgentDriver {
             selected_harness,
             third_party_harness_model_config.as_ref(),
         ));
-        if !repository_sources.deferred_repos().is_empty() {
+        if let Some(dirs) = &factory_skill_dirs {
+            env_vars.insert(
+                OsString::from(WARP_SKILL_DIRS_ENV),
+                OsString::from(dirs.iter().map(|dir| dir.to_string_lossy()).join(",")),
+            );
+        }
+        if !workspace.deferred_repos.is_empty() {
             env_vars.insert(
                 OsString::from(DEFERRED_REPOSITORIES_SKILL_ENV),
                 OsString::from("1"),
@@ -1240,6 +1213,13 @@ impl AgentDriver {
             },
             ctx,
         )?;
+        let computer_use_configured = computer_use_config.is_some();
+        if let Some((enabled, model_id)) = computer_use_config {
+            let terminal_view_id = terminal_driver.as_ref(ctx).terminal_view().id();
+            AIExecutionProfilesModel::handle(ctx).update(ctx, |profiles, ctx| {
+                profiles.set_session_computer_use(terminal_view_id, enabled, model_id, ctx);
+            });
+        }
 
         // Sharing starts asynchronously from terminal creation, before run_internal's setup waits.
         log::info!(
@@ -1334,10 +1314,9 @@ impl AgentDriver {
             restored_conversation_id,
             resume_payload,
             cloud_providers,
-            environment,
-            repository_sources,
-            repository_preparation_overrides,
-            remove_repository_origins,
+            workspace: Some(workspace),
+            factory_skill_dirs,
+            computer_use_configured,
             snapshot_disabled: snapshot_disabled_value,
             snapshot_upload_timeout: snapshot_upload_timeout
                 .unwrap_or(snapshot::DEFAULT_SNAPSHOT_UPLOAD_TIMEOUT),
@@ -1389,10 +1368,9 @@ impl AgentDriver {
             restored_conversation_id: None,
             resume_payload: None,
             cloud_providers: Vec::new(),
-            environment: None,
-            repository_sources: RunRepositorySources::default(),
-            repository_preparation_overrides: Vec::new(),
-            remove_repository_origins: false,
+            workspace: Some(environment::WorkspaceConfiguration::default()),
+            factory_skill_dirs: None,
+            computer_use_configured: false,
             snapshot_disabled: false,
             snapshot_upload_timeout: snapshot::DEFAULT_SNAPSHOT_UPLOAD_TIMEOUT,
             snapshot_script_timeout: snapshot::DEFAULT_DECLARATIONS_SCRIPT_TIMEOUT,
@@ -1410,6 +1388,12 @@ impl AgentDriver {
     /// Pair to the registration in `new` / `execute_run`. No-op when
     /// nothing was registered.
     fn unregister_streamer_consumer(&self, ctx: &mut ModelContext<Self>) {
+        if self.computer_use_configured {
+            let terminal_view_id = self.terminal_driver.as_ref(ctx).terminal_view().id();
+            AIExecutionProfilesModel::handle(ctx).update(ctx, |profiles, ctx| {
+                profiles.clear_session_computer_use(terminal_view_id, ctx);
+            });
+        }
         let terminal = self.terminal_driver.as_ref(ctx).terminal_view().clone();
         terminal.update(ctx, |terminal, ctx| {
             terminal.ai_controller().update(ctx, |controller, ctx| {
@@ -2119,7 +2103,12 @@ impl AgentDriver {
     /// Invalid, missing, or unreadable entries are skipped with a warning; an unset or empty
     /// variable is a no-op.
     async fn load_skills_dirs(foreground: &ModelSpawner<Self>) {
-        let dirs = parse_skills_dirs_env();
+        let dirs = foreground
+            .spawn(|me, _| me.factory_skill_dirs.clone())
+            .await
+            .ok()
+            .flatten()
+            .unwrap_or_else(parse_skills_dirs_env);
         if dirs.is_empty() {
             return;
         }
@@ -2300,49 +2289,37 @@ impl AgentDriver {
                     .await?;
                 let mut environment_skill_repos = Vec::new();
 
-                let (
-                    environment_opt,
-                    repository_sources,
-                    repository_preparation_overrides,
-                    remove_repository_origins,
-                    session_shell_type,
-                ) = foreground
+                let (workspace, session_shell_type) = foreground
                     .spawn(|me, ctx| {
                         (
-                            me.environment.clone(),
-                            me.repository_sources.clone(),
-                            me.repository_preparation_overrides.clone(),
-                            me.remove_repository_origins,
+                            me.workspace.take(),
                             me.terminal_driver
                                 .as_ref(ctx)
                                 .active_session_shell_type(ctx),
                         )
                     })
                     .await?;
-                let mut setup_commands = environment_opt
-                    .as_ref()
-                    .map(|environment| environment.setup_commands.clone())
-                    .unwrap_or_default();
+                let mut workspace = workspace.ok_or(AgentDriverError::InvalidRuntimeState)?;
+                let source_repos = workspace.source_repos.clone();
+                let has_deferred_repositories = !workspace.deferred_repos.is_empty();
+                if let Some(instruction) = environment::build_deferred_repos_instruction(
+                    &foreground.spawn(|me, _| me.working_dir.clone()).await?,
+                    &source_repos,
+                    &workspace.deferred_repos,
+                ) {
+                    inject_deferred_repos_instruction(&mut task.prompt, instruction);
+                }
                 // The Factory definition checkout is run-scoped: the dispatch decides
                 // whether this run gets one by attaching the clone variables,
                 // independent of which environment the run executes in.
                 environment::prepend_factory_definition_clone(
-                    &mut setup_commands,
+                    &mut workspace.setup_commands,
                     session_shell_type,
                 );
-                let source_repos =
-                    eager_source_repos(&repository_sources, environment_opt.as_ref())?;
-                if let Some(instruction) = environment::build_deferred_repos_instruction(
-                    &foreground.spawn(|me, _| me.working_dir.clone()).await?,
-                    &source_repos,
-                    repository_sources.deferred_repos(),
-                ) {
-                    inject_deferred_repos_instruction(&mut task.prompt, instruction);
-                }
 
-                if environment_opt.is_some()
+                if workspace.has_environment
                     || !source_repos.is_empty()
-                    || !setup_commands.is_empty()
+                    || !workspace.setup_commands.is_empty()
                 {
                     log::info!("Loading environment...");
                     environment_skill_repos = source_repos.clone();
@@ -2376,7 +2353,6 @@ impl AgentDriver {
 
                     let harness = task.harness.harness();
                     let setup_events_for_environment = setup_events.clone();
-                    let source_repos_for_prepare = source_repos;
                     let prepare_outcome = foreground
                         .spawn(move |me, ctx| {
                             let working_dir = me.working_dir.clone();
@@ -2385,12 +2361,7 @@ impl AgentDriver {
                                     working_dir,
                                     false, /* is_sandbox */
                                     harness,
-                                    environment::RepositoryPreparationOptions::new(
-                                        source_repos_for_prepare,
-                                        setup_commands,
-                                        repository_preparation_overrides,
-                                        remove_repository_origins,
-                                    ),
+                                    workspace,
                                     setup_events_for_environment,
                                     environment_snapshot_reporter.clone(),
                                     ctx,
@@ -2475,7 +2446,7 @@ impl AgentDriver {
                             Self::load_skills_dirs(&foreground),
                         )
                         .await;
-                    if !repository_sources.deferred_repos().is_empty() {
+                    if has_deferred_repositories {
                         Self::load_factory_deferred_repositories_skill(&foreground).await;
                     }
                 }

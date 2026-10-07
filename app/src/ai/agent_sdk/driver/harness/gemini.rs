@@ -83,10 +83,15 @@ impl ThirdPartyHarness for GeminiHarness {
             super::super::DEFERRED_REPOSITORIES_SKILL_ENV,
         )) {
             let skill_root = harness_working_dir.join(".gemini").join("skills");
+            let source_dirs = super::skill_dirs_publish::source_dirs_from_env(
+                workspace_root,
+                resolved_env_vars.get(std::ffi::OsStr::new(ai::skills::WARP_SKILL_DIRS_ENV)),
+            );
             let published = super::skill_dirs_publish::publish_skills_for_harness(
                 &skill_root,
                 workspace_root,
                 warp_isolation_platform::detect().is_some(),
+                source_dirs.as_deref(),
                 true,
             )
             .map_err(|error| AgentDriverError::HarnessConfigSetupFailed {

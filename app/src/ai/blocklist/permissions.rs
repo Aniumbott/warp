@@ -16,8 +16,8 @@ use super::BlocklistAIHistoryModel;
 use crate::ai::agent::conversation::AIConversationId;
 use crate::ai::execution_profiles::profiles::AIExecutionProfilesModel;
 use crate::ai::execution_profiles::{
-    AIExecutionProfile, ActionPermission, AskUserQuestionPermission, ExecutionProfileId,
-    WriteToPtyPermission,
+    AIExecutionProfile, ActionPermission, AskUserQuestionPermission, ComputerUsePermission,
+    ExecutionProfileId, WriteToPtyPermission,
 };
 #[cfg(not(target_family = "wasm"))]
 use crate::ai::mcp::TemplatableMCPServerManager;
@@ -224,7 +224,14 @@ impl BlocklistAIPermissions {
     ) -> AIExecutionProfile {
         let active_profile =
             AIExecutionProfilesModel::as_ref(ctx).active_profile(terminal_view_id, ctx);
-        self.permissions_profile_for_id(active_profile.id(), scope, ctx)
+        let mut profile = self.permissions_profile_for_id(active_profile.id(), scope, ctx);
+        profile.computer_use = self.get_computer_use_setting(terminal_view_id, scope, ctx);
+        if let Some(selection) = terminal_view_id
+            .and_then(|id| AIExecutionProfilesModel::as_ref(ctx).session_computer_use(id))
+        {
+            profile.computer_use_model = selection.model_id.clone();
+        }
+        profile
     }
 
     /// Returns the applicable workspace autonomy settings based on execution mode.
@@ -631,6 +638,18 @@ impl BlocklistAIPermissions {
         scope: &impl TeamScope,
         ctx: &AppContext,
     ) -> crate::ai::execution_profiles::ComputerUsePermission {
+        if let Some(policy) = Self::team_autonomy_settings(scope, ctx).computer_use_setting {
+            return policy;
+        }
+        if let Some(selection) = terminal_view_id
+            .and_then(|id| AIExecutionProfilesModel::as_ref(ctx).session_computer_use(id))
+        {
+            return if selection.enabled {
+                ComputerUsePermission::AlwaysAllow
+            } else {
+                ComputerUsePermission::Never
+            };
+        }
         let active_profile =
             AIExecutionProfilesModel::as_ref(ctx).active_profile(terminal_view_id, ctx);
         self.get_computer_use_setting_for_profile(active_profile.id(), scope, ctx)

@@ -1236,14 +1236,17 @@ impl LLMPreferences {
         app: &'a AppContext,
         terminal_view_id: Option<EntityId>,
     ) -> &'a LLMInfo {
-        let profile = AIExecutionProfilesModel::as_ref(app).active_profile(terminal_view_id, app);
+        let profiles = AIExecutionProfilesModel::as_ref(app);
+        let profile = profiles.active_profile(terminal_view_id, app);
 
         let available = self.get_computer_use_available(scope.team_uid(), app);
-        profile
-            .data()
-            .computer_use_model
-            .clone()
-            .and_then(|id| available.info_for_id(&id))
+        let selected_model = match terminal_view_id.and_then(|id| profiles.session_computer_use(id))
+        {
+            Some(selection) => selection.model_id.as_ref(),
+            None => profile.data().computer_use_model.as_ref(),
+        };
+        selected_model
+            .and_then(|id| available.info_for_id(id))
             .unwrap_or_else(|| self.get_default_computer_use_model(scope, app))
     }
 

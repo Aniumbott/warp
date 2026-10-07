@@ -1,3 +1,4 @@
+use std::ffi::OsString;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -79,6 +80,62 @@ fn required_deferred_skill_preserves_conflicting_targets_in_sandbox_and_fails_ou
             "existing user skill"
         );
     }
+}
+
+#[test]
+fn empty_configured_skill_dirs_suppress_ambient_sources() {
+    let workspace = TempDir::new().unwrap();
+    let source_dirs = source_dirs_from_env(workspace.path(), Some(&OsString::from("")));
+    assert_eq!(source_dirs, Some(Vec::new()));
+    assert_eq!(source_dirs_from_env(workspace.path(), None), None);
+
+    let published_root = workspace.path().join("harness/skills");
+    assert!(
+        publish_skills_for_harness(
+            &published_root,
+            workspace.path(),
+            false,
+            source_dirs.as_deref(),
+            false,
+        )
+        .unwrap()
+        .is_empty()
+    );
+    assert!(!published_root.exists());
+}
+
+#[test]
+fn empty_resolved_directories_still_publish_the_required_deferred_skill() {
+    let root = TempDir::new().unwrap();
+    let bundled = write_skill(root.path(), FACTORY_DEFERRED_REPOSITORIES_SKILL);
+    let source_dirs = source_dirs_from_env(root.path(), Some(&OsString::from(""))).unwrap();
+    let configured = skill_dirs_from_source_dirs(source_dirs);
+    let skill_root = root.path().join(".gemini/skills");
+    let published =
+        publish_skill_sources(&skill_root, &configured, &[], Some(&bundled), false).unwrap();
+    let canonical = skill_root.join(FACTORY_DEFERRED_REPOSITORIES_SKILL);
+    assert_eq!(published, vec![canonical.clone()]);
+    assert_eq!(fs::read_link(canonical).unwrap(), bundled);
+}
+
+#[test]
+fn resolved_skill_dirs_are_published_relative_to_workspace_root() {
+    let workspace = TempDir::new().unwrap();
+    let source_dir = workspace.path().join("repo/skills");
+    let skill = write_skill(&source_dir, "factory-skill");
+    let published_root = workspace.path().join("harness/skills");
+    let source_dirs = source_dirs_from_env(workspace.path(), Some(&OsString::from("repo/skills")));
+    let published = publish_skills_for_harness(
+        &published_root,
+        workspace.path(),
+        false,
+        source_dirs.as_deref(),
+        false,
+    )
+    .unwrap();
+    let link = published_root.join("factory-skill");
+    assert!(published.contains(&link));
+    assert_eq!(fs::read_link(&link).unwrap(), skill);
 }
 
 fn publish_source_dirs(

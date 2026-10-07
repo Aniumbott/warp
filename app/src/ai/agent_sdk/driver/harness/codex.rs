@@ -644,13 +644,16 @@ fn publish_skills_for_codex(
 ) -> Result<()> {
     let skill_root = harness_working_dir.join(".agents").join("skills");
     let is_sandbox = warp_isolation_platform::detect().is_some();
+    let source_dirs = super::skill_dirs_publish::source_dirs_from_env(
+        workspace_root,
+        resolved_env_vars.get(OsStr::new(ai::skills::WARP_SKILL_DIRS_ENV)),
+    );
     let published = super::skill_dirs_publish::publish_skills_for_harness(
         &skill_root,
         workspace_root,
         is_sandbox,
-        resolved_env_vars.contains_key(std::ffi::OsStr::new(
-            super::super::DEFERRED_REPOSITORIES_SKILL_ENV,
-        )),
+        source_dirs.as_deref(),
+        resolved_env_vars.contains_key(OsStr::new(super::super::DEFERRED_REPOSITORIES_SKILL_ENV)),
     )?;
     super::skill_dirs_publish::exclude_published_skill_paths_from_git(
         harness_working_dir,

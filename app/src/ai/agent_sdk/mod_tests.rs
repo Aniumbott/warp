@@ -1,8 +1,9 @@
+use std::fs;
 use std::sync::Arc;
 
 use chrono::Utc;
 use clap::Parser;
-use cloud_object_models::CodeForge;
+use cloud_object_models::{CodeForge, RunRepositorySources};
 use command::blocking::Command as ProcessCommand;
 use serde_json::json;
 use warp_cli::agent::{
@@ -22,14 +23,14 @@ use warpui::{App, SingletonEntity, WindowId};
 use super::{
     AgentDriverRunner, CommandAuthentication, command_authentication, command_requires_auth,
     command_to_telemetry_event, reconcile_task_harness, resolve_agent_driver_team_scope,
-    validated_driver_repositories_for_preparation,
+    selected_execution_skills,
 };
+use crate::ai::agent_sdk::driver::environment::WorkspaceConfiguration;
 use crate::ai::agent_sdk::driver::harness::HarnessKind;
-use crate::ai::agent_sdk::driver::{
-    AgentDriverError, AgentDriverOptions, AgentRunPrompt, RunRepositorySources, Task,
-};
+use crate::ai::agent_sdk::driver::{AgentDriverError, AgentDriverOptions, AgentRunPrompt, Task};
 use crate::ai::ambient_agents::task::{AmbientAgentTask, AmbientAgentTaskState, TaskScope};
 use crate::ai::cloud_environments::{AmbientAgentEnvironment, SourceRepo};
+use crate::ai::skills::ResolvedSkill;
 use crate::auth::AuthStateProvider;
 use crate::auth::user::{PrincipalType, User};
 use crate::network::NetworkStatus;
@@ -48,6 +49,116 @@ use crate::workspaces::workspace::{Workspace, WorkspaceUid};
 
 const TASK_ID: &str = "00000000-0000-0000-0000-000000000001";
 
+#[test]
+fn paired_execution_launch_keeps_inventory_separate_from_eager_membership() {
+    App::test((), |mut app| async move {
+        let root = tempfile::TempDir::new().unwrap();
+        let args =
+            parse_run_agent_args(&["agent", "run", "--task-id", TASK_ID, "--execution-id", "42"]);
+        for eager in [
+            json!([]),
+            json!([{
+                "forge": "GITHUB", "owner": "acme", "name": "api",
+                "ref": {"type": "BRANCH", "value": "feature"},
+                "cloneFrom": null, "preserveOrigin": true,
+            }]),
+        ] {
+            let expected_eager_count = eager.as_array().unwrap().len();
+            let config = serde_json::from_value(json!({
+                "taskId": TASK_ID, "executionId": "42", "harness": "OZ",
+                "conversationId": null, "parentRunId": null, "modelId": null,
+                "reasoningLevel": null, "profileId": null, "computerUseModelId": null,
+                "inferenceProviders": null, "providers": null,
+                "idleOnCompleteSeconds": null, "idleOnFailSeconds": null,
+                "mcpServersJson": "{}", "skills": [], "factorySkillDirs": [],
+                "computerUseEnabled": false, "repositories": eager,
+                "deferredRepositories": [{
+                    "codeForge": "GITLAB", "owner": "platform/backend", "repo": "api",
+                }],
+                "setupCommands": [], "sessionSharingAcls": [],
+                "skipInitialTurn": false, "snapshotDisabled": false,
+            }))
+            .unwrap();
+            let (options, _, _, _) = app.update(|ctx| {
+                super::build_execution_task_and_options(
+                    &args,
+                    config,
+                    root.path().to_path_buf(),
+                    None,
+                    Vec::new(),
+                    ctx,
+                )
+                .unwrap()
+            });
+            assert_eq!(options.workspace.source_repos.len(), expected_eager_count);
+            if expected_eager_count != 0 {
+                assert_eq!(
+                    options.workspace.source_repos,
+                    vec![SourceRepo::new(
+                        CodeForge::GitHub,
+                        "acme".into(),
+                        "api".into(),
+                    )]
+                );
+            }
+            assert_eq!(
+                options.workspace.deferred_repos,
+                vec![SourceRepo::new(
+                    CodeForge::GitLab,
+                    "platform/backend".into(),
+                    "api".into(),
+                )]
+            );
+            assert_eq!(options.factory_skill_dirs, Some(Vec::new()));
+        }
+    });
+}
+
+#[test]
+fn ordered_execution_skills_attach_only_first_and_expose_all_for_discovery() {
+    let root = tempfile::TempDir::new().unwrap();
+    let (none, empty_dirs) = selected_execution_skills(Vec::new()).unwrap();
+    assert!(none.is_none());
+    assert!(empty_dirs.is_empty());
+    let skill_paths = ["first", "second"]
+        .into_iter()
+        .map(|name| {
+            let skill_path = root
+                .path()
+                .join(name)
+                .join("skills")
+                .join(name)
+                .join("SKILL.md");
+            fs::create_dir_all(skill_path.parent().unwrap()).unwrap();
+            fs::write(
+                &skill_path,
+                format!("---\nname: {name}\ndescription: example\n---\nInstructions for {name}"),
+            )
+            .unwrap();
+            let parsed_skill = ai::skills::parse_skill(&skill_path).unwrap();
+            ResolvedSkill {
+                skill_path,
+                name: name.to_owned(),
+                instructions: format!("Instructions for {name}"),
+                parsed_skill,
+            }
+        })
+        .collect::<Vec<_>>();
+    let (only, only_dirs) = selected_execution_skills(vec![skill_paths[0].clone()]).unwrap();
+    assert_eq!(only.unwrap().name, "first");
+    assert_eq!(only_dirs, vec![root.path().join("first").join("skills")]);
+
+    let (first, dirs) = selected_execution_skills(skill_paths).unwrap();
+    assert_eq!(first.unwrap().name, "first");
+    assert_eq!(
+        dirs,
+        ["first", "second"]
+            .into_iter()
+            .map(|name| root.path().join(name).join("skills"))
+            .collect::<Vec<_>>()
+    );
+}
+
 fn parse_run_agent_args(args: &[&str]) -> RunAgentArgs {
     let parsed = Args::try_parse_from(std::iter::once("warp").chain(args.iter().copied()))
         .expect("agent run args should parse");
@@ -62,7 +173,6 @@ fn parse_run_agent_args(args: &[&str]) -> RunAgentArgs {
 
 #[test]
 fn driver_validation_uses_live_repository_membership() {
-    let mut options = agent_driver_options();
     let mut environment =
         AmbientAgentEnvironment::new(String::new(), None, vec![], String::new(), vec![]);
     environment.source_repos = Some(vec![SourceRepo::new(
@@ -70,15 +180,12 @@ fn driver_validation_uses_live_repository_membership() {
         "warpdotdev".to_string(),
         "warp".to_string(),
     )]);
-    options.repository_sources = RunRepositorySources::Legacy {
-        additional: vec![SourceRepo::new(
-            CodeForge::GitHub,
-            "warpdotdev".to_string(),
-            "added-after-dispatch".to_string(),
-        )],
-    };
-    options.environment = Some(environment);
-    options.repository_preparation_overrides = vec![RepositoryPreparationOverride {
+    let additional_source_repos = vec![SourceRepo::new(
+        CodeForge::GitHub,
+        "warpdotdev".to_string(),
+        "added-after-dispatch".to_string(),
+    )];
+    let repository_preparation_overrides = vec![RepositoryPreparationOverride {
         code_forge: RepositoryForge::GitHub,
         repo_owner: "WarpDotDev".to_string(),
         repo_name: "Warp".to_string(),
@@ -91,10 +198,18 @@ fn driver_validation_uses_live_repository_membership() {
         preserve_origin: true,
     }];
 
-    let repositories = validated_driver_repositories_for_preparation(&options).unwrap();
+    let workspace = WorkspaceConfiguration::from_snapshot(
+        Some(&environment),
+        RunRepositorySources::Legacy {
+            additional: additional_source_repos,
+        },
+        repository_preparation_overrides,
+        false,
+    )
+    .unwrap();
 
     assert_eq!(
-        repositories,
+        workspace.source_repos,
         vec![
             SourceRepo::new(
                 CodeForge::GitHub,
@@ -112,7 +227,6 @@ fn driver_validation_uses_live_repository_membership() {
 
 #[test]
 fn factory_plan_is_authoritative_and_still_validates_checkout_overrides() {
-    let mut options = agent_driver_options();
     let mut environment =
         AmbientAgentEnvironment::new(String::new(), None, vec![], String::new(), vec![]);
     environment.source_repos = Some(vec![SourceRepo::new(
@@ -120,7 +234,6 @@ fn factory_plan_is_authoritative_and_still_validates_checkout_overrides() {
         "acme".to_string(),
         "unselected".to_string(),
     )]);
-    options.environment = Some(environment);
     let eager = SourceRepo::new(
         CodeForge::GitLab,
         "platform/backend".to_string(),
@@ -132,8 +245,7 @@ fn factory_plan_is_authoritative_and_still_validates_checkout_overrides() {
         "deferred_source_repos": [{"code_forge": "GITHUB", "owner": "acme", "repo": "on-demand"}]
     }))
     .unwrap();
-    options.repository_sources = snapshot.repositories.into_sources();
-    options.repository_preparation_overrides = vec![RepositoryPreparationOverride {
+    let overrides = vec![RepositoryPreparationOverride {
         code_forge: RepositoryForge::GitLab,
         repo_owner: "platform/backend".to_string(),
         repo_name: "api".to_string(),
@@ -142,9 +254,21 @@ fn factory_plan_is_authoritative_and_still_validates_checkout_overrides() {
         preserve_origin: true,
     }];
 
+    let workspace = WorkspaceConfiguration::from_snapshot(
+        Some(&environment),
+        snapshot.repositories.into_sources(),
+        overrides,
+        false,
+    )
+    .unwrap();
+    assert_eq!(workspace.source_repos, vec![eager]);
     assert_eq!(
-        validated_driver_repositories_for_preparation(&options).unwrap(),
-        vec![eager]
+        workspace.deferred_repos,
+        vec![SourceRepo::new(
+            CodeForge::GitHub,
+            "acme".into(),
+            "on-demand".into(),
+        )]
     );
 }
 fn team(uid: i64, name: &str) -> Team {
@@ -196,10 +320,9 @@ pub(crate) fn agent_driver_options() -> AgentDriverOptions {
         secrets: Default::default(),
         resume: None,
         cloud_providers: vec![],
-        environment: None,
-        repository_sources: RunRepositorySources::default(),
-        repository_preparation_overrides: vec![],
-        remove_repository_origins: false,
+        workspace: WorkspaceConfiguration::default(),
+        factory_skill_dirs: None,
+        computer_use_config: None,
         selected_harness: Harness::Oz,
         third_party_harness_model_config: None,
         team_scope: None,
@@ -373,6 +496,7 @@ fn factory_experiment_bootstrap_subprocess() {
             TASK_ID.to_string(),
             &mut options,
             &mut task,
+            true,
         )
         .await
         .unwrap();

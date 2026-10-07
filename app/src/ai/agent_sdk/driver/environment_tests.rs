@@ -1,7 +1,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use cloud_object_models::CodeForge;
+use cloud_object_models::{CodeForge, RunRepositorySources};
 use command::blocking::Command;
 use futures::channel::oneshot;
 use futures::executor::block_on;
@@ -16,18 +16,66 @@ use warp_core::command::ExitCode;
 
 use super::{
     CloneFailureCredentialIdentity, CloneFailureIdentityDiagnostics, PrepareEnvironmentError,
-    RepositoryCloneRequest, SETUP_COMMAND_OUTPUT_TRUNCATION_MARKER, SetupCommandPhase,
-    await_setup_phase, build_deferred_repos_instruction, build_git_credential_query_command,
-    build_parallel_clone_command, build_remove_repository_origins_command,
-    build_resolved_head_command, checkout_command_for, clone_failure_identity_diagnostics,
-    environment_snapshot, is_valid_git_object_id, merge_repos_deduped, parse_resolved_head_sha,
-    parse_resolved_head_shas, read_failed_repo_names, repository_clone_requests,
-    resolve_eager_source_repos, setup_command_failure, single_repo_name, unique_clone_hosts,
+    RepositoryCloneRequest, ResolvedRepository, SETUP_COMMAND_OUTPUT_TRUNCATION_MARKER,
+    SetupCommandPhase, WorkspaceConfiguration, await_setup_phase, build_deferred_repos_instruction,
+    build_git_credential_query_command, build_parallel_clone_command,
+    build_remove_repository_origins_command, build_resolved_head_command, checkout_command_for,
+    clone_failure_identity_diagnostics, environment_snapshot, is_valid_git_object_id,
+    merge_repos_deduped, parse_resolved_head_sha, parse_resolved_head_shas, read_failed_repo_names,
+    repository_clone_requests, setup_command_failure, single_repo_name, unique_clone_hosts,
     validate_repository_preparation_overrides,
 };
 use crate::ai::agent_sdk::driver::AgentDriverError;
 use crate::ai::cloud_environments::{AmbientAgentEnvironment, SourceRepo};
 use crate::terminal::shell::ShellType;
+
+#[test]
+fn resolved_repositories_apply_origin_policy_per_checkout() {
+    let first = SourceRepo::new(CodeForge::GitHub, "owner".into(), "first".into());
+    let second = SourceRepo::new(CodeForge::GitLab, "owner".into(), "second".into());
+    let workspace = WorkspaceConfiguration::from_resolved(
+        vec![
+            ResolvedRepository {
+                source: first,
+                checkout: None,
+                clone_from: None,
+                preserve_origin: true,
+            },
+            ResolvedRepository {
+                source: second,
+                checkout: Some(RepositoryHeadRef::Branch("feature".into())),
+                clone_from: Some(SourceRepo::new(
+                    CodeForge::GitLab,
+                    "source".into(),
+                    "second".into(),
+                )),
+                preserve_origin: false,
+            },
+        ],
+        Vec::new(),
+        vec!["make setup".into()],
+    )
+    .unwrap();
+    assert_eq!(workspace.setup_commands, vec!["make setup"]);
+    let requests = workspace.clone_requests;
+    assert!(!requests[0].remove_origin);
+    assert!(requests[1].remove_origin);
+    assert!(requests[1].fetch_branch_only);
+    assert_eq!(requests[1].remote.owner, "source");
+}
+
+#[test]
+fn duplicate_resolved_repositories_fail_before_clone() {
+    let repositories = (0..2)
+        .map(|_| ResolvedRepository {
+            source: SourceRepo::new(CodeForge::GitHub, "owner".into(), "repo".into()),
+            checkout: None,
+            clone_from: None,
+            preserve_origin: true,
+        })
+        .collect::<Vec<_>>();
+    assert!(WorkspaceConfiguration::from_resolved(repositories, Vec::new(), Vec::new()).is_err());
+}
 
 fn command_output(stdout: &str, stderr: &str, status: CommandExitStatus) -> CommandOutput {
     CommandOutput {
@@ -820,14 +868,18 @@ fn merge_repos_supports_additional_only_and_empty_inputs() {
 
 #[test]
 fn source_repos_to_clone_none_retains_legacy_merge_behavior() {
-    // Pins today's behavior so a regression in the branching logic is caught: `None`
-    // must merge the environment's repos with `additional_source_repos` exactly as
-    // `merge_repos_deduped` already does.
     let environment = environment_with_repos(vec![repo(CodeForge::GitHub, "WarpDotDev", "Warp")]);
     let additional = vec![repo(CodeForge::GitHub, "warpdotdev", "warp-server")];
 
     assert_eq!(
-        resolve_eager_source_repos(Some(&environment), None, additional).unwrap(),
+        WorkspaceConfiguration::from_snapshot(
+            Some(&environment),
+            RunRepositorySources::Legacy { additional },
+            Vec::new(),
+            false,
+        )
+        .unwrap()
+        .source_repos,
         vec![
             repo(CodeForge::GitHub, "WarpDotDev", "Warp"),
             repo(CodeForge::GitHub, "warpdotdev", "warp-server"),
@@ -838,56 +890,67 @@ fn source_repos_to_clone_none_retains_legacy_merge_behavior() {
 #[test]
 fn source_repos_to_clone_some_empty_clones_nothing() {
     let environment = environment_with_repos(vec![repo(CodeForge::GitHub, "acme", "monolith")]);
-    let additional = vec![repo(CodeForge::GitHub, "acme", "webhook-origin")];
-
-    let eager = resolve_eager_source_repos(Some(&environment), Some(vec![]), additional).unwrap();
-    assert!(eager.is_empty());
+    let deferred = vec![repo(CodeForge::GitLab, "platform/backend", "api")];
+    let workspace = WorkspaceConfiguration::from_snapshot(
+        Some(&environment),
+        RunRepositorySources::FactoryPlan {
+            eager: Vec::new(),
+            deferred: deferred.clone(),
+        },
+        Vec::new(),
+        false,
+    )
+    .unwrap();
+    assert!(workspace.source_repos.is_empty());
+    assert!(workspace.clone_requests.is_empty());
+    assert_eq!(workspace.deferred_repos, deferred);
+    assert_eq!(single_repo_name(&workspace.source_repos), None);
 }
 
 #[test]
-fn source_repos_to_clone_some_ignores_environment_and_additional() {
+fn source_repos_to_clone_some_keeps_deferred_inventory_out_of_preparation() {
     let environment = environment_with_repos(vec![repo(CodeForge::GitHub, "acme", "monolith")]);
-    let additional = vec![repo(CodeForge::GitHub, "acme", "webhook-origin")];
     let plan = vec![repo(CodeForge::GitHub, "acme", "billing")];
-
-    let eager =
-        resolve_eager_source_repos(Some(&environment), Some(plan.clone()), additional).unwrap();
-    assert_eq!(eager, plan);
+    let deferred = vec![repo(CodeForge::GitLab, "other", "billing")];
+    let workspace = WorkspaceConfiguration::from_snapshot(
+        Some(&environment),
+        RunRepositorySources::FactoryPlan {
+            eager: plan.clone(),
+            deferred: deferred.clone(),
+        },
+        Vec::new(),
+        false,
+    )
+    .unwrap();
+    assert_eq!(workspace.source_repos, plan);
+    assert_eq!(workspace.deferred_repos, deferred);
+    assert_eq!(workspace.clone_requests.len(), 1);
+    assert_eq!(workspace.clone_requests[0].remote, plan[0]);
+    assert_eq!(
+        single_repo_name(&workspace.source_repos),
+        Some("billing".to_owned())
+    );
 }
 
 #[test]
 fn source_repos_to_clone_some_still_applies_collision_check() {
-    let error = resolve_eager_source_repos(
+    let result = WorkspaceConfiguration::from_snapshot(
         None,
-        Some(vec![
-            repo(CodeForge::GitHub, "a", "widget"),
-            repo(CodeForge::GitLab, "b", "widget"),
-        ]),
+        RunRepositorySources::FactoryPlan {
+            eager: vec![
+                repo(CodeForge::GitHub, "a", "widget"),
+                repo(CodeForge::GitLab, "b", "widget"),
+            ],
+            deferred: Vec::new(),
+        },
         Vec::new(),
-    )
-    .unwrap_err();
+        false,
+    );
 
     assert!(matches!(
-        error,
-        PrepareEnvironmentError::CloneDirectoryCollision { repo_name, .. } if repo_name == "widget"
+        result,
+        Err(PrepareEnvironmentError::CloneDirectoryCollision { repo_name, .. }) if repo_name == "widget"
     ));
-}
-
-#[test]
-fn single_eager_repo_with_deferred_repos_still_selects_for_auto_cd() {
-    let eager = resolve_eager_source_repos(
-        None,
-        Some(vec![repo(CodeForge::GitHub, "acme", "eager-repo")]),
-        Vec::new(),
-    )
-    .unwrap();
-    assert_eq!(single_repo_name(&eager), Some("eager-repo".to_string()));
-}
-
-#[test]
-fn zero_eager_repos_leaves_no_repo_to_auto_cd_into() {
-    let eager = resolve_eager_source_repos(None, Some(vec![]), Vec::new()).unwrap();
-    assert_eq!(single_repo_name(&eager), None);
 }
 
 fn test_working_dir() -> PathBuf {

@@ -43,13 +43,13 @@
 //! tree.
 
 use std::collections::HashSet;
-use std::ffi::OsStr;
+use std::ffi::{OsStr, OsString};
 use std::fs;
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-use ai::skills::{parse_skills_dirs_env, resolve_skills_dirs};
+use ai::skills::{parse_skills_dirs_env, parse_skills_dirs_value, resolve_skills_dirs};
 use anyhow::{Context, Result};
 use warp_core::features::FeatureFlag;
 use warp_core::safe_warn;
@@ -73,14 +73,26 @@ const NON_SANDBOX_ALTERNATE_NAME_PREFIX: &str = "warp-";
 pub(super) fn warp_skill_source_dirs(working_dir: &Path) -> Vec<PathBuf> {
     resolve_skills_dirs(working_dir, parse_skills_dirs_env())
 }
+pub(super) fn source_dirs_from_env(
+    working_dir: &Path,
+    value: Option<&OsString>,
+) -> Option<Vec<PathBuf>> {
+    value
+        .and_then(|value| value.to_str())
+        .map(parse_skills_dirs_value)
+        .map(|dirs| resolve_skills_dirs(working_dir, dirs))
+}
 
 pub(super) fn publish_skills_for_harness(
     skill_root: &Path,
     working_dir: &Path,
     is_sandbox: bool,
+    configured_source_dirs: Option<&[PathBuf]>,
     has_deferred_repositories: bool,
 ) -> Result<Vec<PathBuf>> {
-    let source_dirs = warp_skill_source_dirs(working_dir);
+    let source_dirs = configured_source_dirs
+        .map(ToOwned::to_owned)
+        .unwrap_or_else(|| warp_skill_source_dirs(working_dir));
     let bundled_skill_dirs =
         bundled_factory_mcp_skill_dirs(warp_core::paths::bundled_resources_dir());
     let configured_skill_dirs = skill_dirs_from_source_dirs(&source_dirs);

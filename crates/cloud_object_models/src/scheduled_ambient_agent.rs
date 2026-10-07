@@ -65,23 +65,18 @@ pub struct AgentConfigSnapshot {
     pub repositories: RepositoryConfigSnapshot,
 }
 
-/// Flat repository wire data, including webhook sources retained independently of clone membership.
+/// Flat repository wire data for task snapshots.
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
 pub struct RepositoryConfigSnapshot {
     /// Extra repositories the worker should clone in addition to the environment's repos.
     /// This is server-populated for per-task sources such as a GitHub webhook's origin repo.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     additional_source_repos: Option<Vec<SourceRepo>>,
-    /// Authoritative run-scoped repository materialization plan for a Factory-owned run.
-    /// `Some(list)`, including an empty list, is the eager repository membership and is not
-    /// combined with the environment's repositories or `additional_source_repos`. `None`
-    /// means this is a legacy task: eagerly prepare the environment's repositories plus
-    /// `additional_source_repos`.
+    /// Authoritative eager membership, including an empty list. Absent or null uses the legacy
+    /// environment-plus-additions membership.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     source_repos_to_clone: Option<Vec<SourceRepo>>,
-    /// Repositories attached to the run's Factory that remain deferred after
-    /// `source_repos_to_clone` is computed. Used only to build the on-demand-clone hidden
-    /// instruction; never merged into any eager repository list.
+    /// On-demand inventory, never merged into eager membership.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     deferred_source_repos: Vec<SourceRepo>,
 }
@@ -122,15 +117,6 @@ impl Default for RunRepositorySources {
     fn default() -> Self {
         Self::Legacy {
             additional: Vec::new(),
-        }
-    }
-}
-
-impl RunRepositorySources {
-    pub fn deferred_repos(&self) -> &[SourceRepo] {
-        match self {
-            Self::FactoryPlan { deferred, .. } => deferred,
-            Self::Legacy { .. } => &[],
         }
     }
 }

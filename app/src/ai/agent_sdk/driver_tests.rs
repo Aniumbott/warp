@@ -2415,6 +2415,34 @@ fn ambient_driver_resumed_conversation_elapsed_idle_window_commits_exiting() {
 }
 
 #[test]
+fn deferred_only_workspace_activates_the_runtime_skill_before_terminal_creation() {
+    App::test((), |mut app| async move {
+        initialize_workspace_test_app(&mut app);
+        let mut options = crate::ai::agent_sdk::tests::agent_driver_options();
+        options.workspace = super::environment::WorkspaceConfiguration::from_resolved(
+            Vec::new(),
+            vec![SourceRepo::new(
+                CodeForge::GitLab,
+                "platform/backend".into(),
+                "api".into(),
+            )],
+            Vec::new(),
+        )
+        .unwrap();
+        let driver = app.add_model(|ctx| AgentDriver::new(options, ctx).unwrap());
+        driver.read(&app, |driver, _| {
+            assert_eq!(
+                driver
+                    .resolved_env_vars
+                    .get(std::ffi::OsStr::new(super::DEFERRED_REPOSITORIES_SKILL_ENV)),
+                Some(&OsString::from("1")),
+            );
+            assert!(driver.workspace.as_ref().unwrap().source_repos.is_empty());
+        });
+    });
+}
+
+#[test]
 fn inject_deferred_repos_instruction_prepends_to_local_prompt() {
     let mut prompt = AgentRunPrompt::Local("do the task".to_string());
     inject_deferred_repos_instruction(&mut prompt, "clone acme/billing first".to_string());
