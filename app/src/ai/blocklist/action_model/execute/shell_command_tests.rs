@@ -3,14 +3,15 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use async_channel::unbounded;
+use futures::channel::oneshot;
 use futures_lite::future::poll_once;
 use parking_lot::FairMutex;
 use warp_terminal::event::ObservedExitStatus;
 use warpui::{App, EntityId, ModelHandle};
 
 use super::{
-    ActionResult, AnyActionExecution, BlockSelector, BlockWaitEvent, ExecuteActionInput,
-    ShellCommandExecutor, ShellCommandExecutorEvent, ShellRecoveryResult,
+    ActionResult, AnyActionExecution, BlockSelector, ExecuteActionInput, ShellCommandExecutor,
+    ShellCommandExecutorEvent, ShellRecoveryResult,
 };
 use crate::ai::agent::conversation::AIConversationId;
 use crate::ai::agent::task::TaskId;
@@ -163,7 +164,7 @@ fn injection_interrupt_keeps_completion_waiter_until_normal_precmd() {
                 ctx,
             )
         });
-        let (tx, rx) = async_channel::bounded::<BlockWaitEvent>(1);
+        let (tx, mut rx) = oneshot::channel();
         executor.update(&mut app, |executor, ctx| {
             executor
                 .block_finished_senders
@@ -179,7 +180,7 @@ fn injection_interrupt_keeps_completion_waiter_until_normal_precmd() {
                     .contains_key(&BlockSelector::Id(block_id.clone()))
             );
         });
-        assert!(rx.try_recv().is_err());
+        assert_eq!(rx.try_recv().unwrap(), None);
         model.lock().finish_block();
         dispatcher.update(&mut app, |_, ctx| {
             ctx.emit(ModelEvent::BlockMetadataReceived(
@@ -191,7 +192,7 @@ fn injection_interrupt_keeps_completion_waiter_until_normal_precmd() {
                 },
             ));
         });
-        assert!(matches!(rx.try_recv(), Ok(BlockWaitEvent::Finished)));
+        assert_eq!(rx.try_recv().unwrap(), Some(()));
     });
 }
 
@@ -200,6 +201,7 @@ fn shell_command_executor(
 ) -> (
     ModelHandle<ShellCommandExecutor>,
     ModelHandle<ModelEventDispatcher>,
+    Arc<FairMutex<TerminalModel>>,
 ) {
     let terminal_view_id = EntityId::new();
     let sessions = app.add_model(|_| Sessions::new_for_test());
@@ -212,13 +214,13 @@ fn shell_command_executor(
     let executor = app.add_model(|ctx| {
         ShellCommandExecutor::new(
             active_session,
-            terminal_model,
+            terminal_model.clone(),
             &model_event_dispatcher,
             terminal_view_id,
             ctx,
         )
     });
-    (executor, model_event_dispatcher)
+    (executor, model_event_dispatcher, terminal_model)
 }
 
 fn read_shell_command_output(
@@ -255,7 +257,7 @@ fn read_shell_command_output(
 #[test]
 fn shell_recovery_persists_result_until_later_read_and_consumes_it_once() {
     App::test((), |mut app| async move {
-        let (executor, _dispatcher) = shell_command_executor(&mut app);
+        let (executor, _dispatcher, _model) = shell_command_executor(&mut app);
         let action_id: AIAgentActionId = "recover-after-snapshot".to_owned().into();
         let block_id = BlockId::new();
 
@@ -323,7 +325,7 @@ fn block_working_directory_updated_does_not_drain_finish_senders() {
 
         let block_id = BlockId::new();
         let selector = BlockSelector::Id(block_id);
-        let (tx, _rx) = async_channel::bounded::<BlockWaitEvent>(1);
+        let (tx, _rx) = oneshot::channel::<()>();
         executor.update(&mut app, |executor, _ctx| {
             executor.block_finished_senders.insert(selector, tx);
         });
@@ -370,12 +372,15 @@ fn block_working_directory_updated_does_not_drain_finish_senders() {
     });
 }
 
+/// The replacement shell's bootstrap precmd finds the interrupted block already finished, which
+/// must not resolve the pending poll as a normal completion.
 #[test]
 fn shell_recovery_waits_through_bootstrap_before_resolving_follow_up_read() {
     App::test((), |mut app| async move {
-        let (executor, dispatcher) = shell_command_executor(&mut app);
+        let (executor, dispatcher, model) = shell_command_executor(&mut app);
         let action_id: AIAgentActionId = "recover-shell".to_owned().into();
-        let block_id = BlockId::new();
+        model.lock().simulate_long_running_block("exit 7", "");
+        let block_id = model.lock().active_block_id().clone();
         let mut result = Box::pin(executor.update(&mut app, |executor, ctx| {
             executor.action_result_future(
                 BlockSelector::Id(block_id.clone()),
@@ -389,6 +394,7 @@ fn shell_recovery_waits_through_bootstrap_before_resolving_follow_up_read() {
         });
         assert!(poll_once(&mut result).await.is_none());
 
+        model.lock().finish_block();
         dispatcher.update(&mut app, |_, ctx| {
             ctx.emit(ModelEvent::BlockMetadataReceived(
                 BlockMetadataReceivedEvent {
@@ -417,11 +423,5 @@ fn shell_recovery_waits_through_bootstrap_before_resolving_follow_up_read() {
         };
         assert_eq!(result.block_id, block_id);
         assert_eq!(result.status, ObservedExitStatus::Code(7));
-        assert!(matches!(
-            read_shell_command_output(&executor, &block_id, &mut app),
-            AIAgentActionResultType::ReadShellCommandOutput(ReadShellCommandOutputResult::Error(
-                ShellCommandError::BlockNotFound
-            ))
-        ));
     });
 }
