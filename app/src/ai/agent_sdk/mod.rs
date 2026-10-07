@@ -11,7 +11,6 @@ use std::time::Duration;
 
 use ai::api_keys::{ApiKeyManager, AwsCredentialsRefreshStrategy};
 use anyhow::Context;
-use cloud_object_models::RunRepositorySources;
 pub use driver::AgentDriver;
 use driver::AgentDriverError;
 pub(crate) use driver::harness::{ClaudeHarness, task_env_vars, validate_cli_installed};
@@ -65,7 +64,9 @@ use crate::ai::ambient_agents::task::{HarnessConfig, TaskAttachment};
 use crate::ai::attachment_utils::attachments_download_dir;
 #[cfg(not(target_family = "wasm"))]
 use crate::ai::aws_credentials::{BedrockOidcCredentialsConfig, refresh_aws_credentials_oidc};
-use crate::ai::cloud_environments::{AmbientAgentEnvironment, CloudAmbientAgentEnvironment};
+use crate::ai::cloud_environments::{
+    AmbientAgentEnvironment, CloudAmbientAgentEnvironment, SourceRepo,
+};
 use crate::ai::llms::LLMId;
 use crate::ai::skills::{
     ResolveSkillError, ResolvedSkill, clone_repo_for_skill, resolve_skill_spec,
@@ -459,7 +460,7 @@ fn build_merged_config_and_task(
             .or(file_merged.computer_use_enabled),
         harness: harness_override,
         harness_auth_secrets: None,
-        repositories: Default::default(),
+        additional_source_repos: None,
     };
 
     let runtime_mcp_specs = match merged_config.mcp_servers.as_ref() {
@@ -562,7 +563,7 @@ fn build_server_side_task(
         computer_use_enabled: args.computer_use.computer_use_override(),
         harness: harness_override,
         harness_auth_secrets: None,
-        repositories: Default::default(),
+        additional_source_repos: None,
     };
 
     let skill = resolved_skill.as_ref().map(|s| s.parsed_skill.clone());
@@ -1545,7 +1546,8 @@ impl AgentDriverRunner {
         // Handle secrets/attachments fetch (existing task) or task creation (new run).
         // The existing-task branch also surfaces the task's `conversation_id` (if any) so
         // the caller can wire up resume without a separate `--conversation` arg.
-        let (task_conversation_id, repository_sources) = if let Some(task_id_str) = task_id_str {
+        let (task_conversation_id, additional_source_repos) = if let Some(task_id_str) = task_id_str
+        {
             driver_options.team_scope = agent_driver_team_scope;
             setup_events
                 .record_result(
@@ -1581,7 +1583,7 @@ impl AgentDriverRunner {
                 &mut driver_options,
             )
             .await?;
-            (None, RunRepositorySources::default())
+            (None, Vec::new())
         };
         // Resolve environment and cloud providers.
         let environment = setup_events
@@ -1590,9 +1592,9 @@ impl AgentDriverRunner {
                 Self::resolve_environment(foreground, environment_id, &mut driver_options),
             )
             .await?;
-        driver_options.workspace = driver::environment::WorkspaceConfiguration::from_snapshot(
+        driver_options.workspace = driver::environment::WorkspaceConfiguration::from_legacy(
             environment.as_ref(),
-            repository_sources,
+            additional_source_repos,
             repository_preparation_overrides,
             remove_repository_origins,
         )?;
@@ -1722,7 +1724,7 @@ impl AgentDriverRunner {
         task_id_str: String,
         driver_options: &mut AgentDriverOptions,
         task: &mut Task,
-    ) -> Result<(Option<String>, RunRepositorySources), AgentDriverError> {
+    ) -> Result<(Option<String>, Vec<SourceRepo>), AgentDriverError> {
         let (task_secrets, server_api) = foreground
             .spawn({
                 let task_id_str = task_id_str.clone();
@@ -1840,7 +1842,7 @@ impl AgentDriverRunner {
             task_conversation_id,
             task_harness,
             task_harness_model_config,
-            repository_sources,
+            additional_source_repos,
             task_team_scope,
             experimental,
         ) = match task_metadata_result {
@@ -1857,8 +1859,8 @@ impl AgentDriverRunner {
                 let experimental = agent_config_snapshot
                     .as_ref()
                     .and_then(|config| config.experimental.clone());
-                let repository_sources = agent_config_snapshot
-                    .map(|config| config.repositories.into_sources())
+                let additional_source_repos = agent_config_snapshot
+                    .and_then(|config| config.additional_source_repos)
                     .unwrap_or_default();
                 let task_team_scope = task_metadata
                     .scope
@@ -1869,12 +1871,12 @@ impl AgentDriverRunner {
                     task_metadata.conversation_id,
                     Some(task_harness),
                     task_harness_model_config,
-                    repository_sources,
+                    additional_source_repos,
                     task_team_scope,
                     experimental,
                 )
             }
-            Ok(None) => (None, None, None, None, Default::default(), None, None),
+            Ok(None) => (None, None, None, None, Vec::new(), None, None),
             Err(err) => return Err(AgentDriverError::TaskMetadataFetchFailed(err)),
         };
         match experimental.as_ref() {
@@ -1924,7 +1926,7 @@ impl AgentDriverRunner {
             *dir = attachments_dir;
         }
 
-        Ok((task_conversation_id, repository_sources))
+        Ok((task_conversation_id, additional_source_repos))
     }
 
     /// If we are starting this agent run from an existing conversation, load the conversation

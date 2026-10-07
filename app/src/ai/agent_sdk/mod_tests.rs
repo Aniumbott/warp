@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use chrono::Utc;
 use clap::Parser;
-use cloud_object_models::{CodeForge, RunRepositorySources};
+use cloud_object_models::CodeForge;
 use command::blocking::Command as ProcessCommand;
 use mockito::Server;
 use serde_json::json;
@@ -273,11 +273,9 @@ fn driver_validation_uses_live_repository_membership() {
         preserve_origin: true,
     }];
 
-    let workspace = WorkspaceConfiguration::from_snapshot(
+    let workspace = WorkspaceConfiguration::from_legacy(
         Some(&environment),
-        RunRepositorySources::Legacy {
-            additional: additional_source_repos,
-        },
+        additional_source_repos,
         repository_preparation_overrides,
         false,
     )
@@ -300,52 +298,6 @@ fn driver_validation_uses_live_repository_membership() {
     );
 }
 
-#[test]
-fn factory_plan_is_authoritative_and_still_validates_checkout_overrides() {
-    let mut environment =
-        AmbientAgentEnvironment::new(String::new(), None, vec![], String::new(), vec![]);
-    environment.source_repos = Some(vec![SourceRepo::new(
-        CodeForge::GitHub,
-        "acme".to_string(),
-        "unselected".to_string(),
-    )]);
-    let eager = SourceRepo::new(
-        CodeForge::GitLab,
-        "platform/backend".to_string(),
-        "api".to_string(),
-    );
-    let snapshot: AgentConfigSnapshot = serde_json::from_value(json!({
-        "additional_source_repos": [{"code_forge": "GITHUB", "owner": "acme", "repo": "webhook"}],
-        "source_repos_to_clone": [{"code_forge": "GITLAB", "owner": "platform/backend", "repo": "api"}],
-        "deferred_source_repos": [{"code_forge": "GITHUB", "owner": "acme", "repo": "on-demand"}]
-    }))
-    .unwrap();
-    let overrides = vec![RepositoryPreparationOverride {
-        code_forge: RepositoryForge::GitLab,
-        repo_owner: "platform/backend".to_string(),
-        repo_name: "api".to_string(),
-        head: RepositoryHeadRef::CommitSha("0123456789abcdef0123456789abcdef01234567".to_string()),
-        clone_from: None,
-        preserve_origin: true,
-    }];
-
-    let workspace = WorkspaceConfiguration::from_snapshot(
-        Some(&environment),
-        snapshot.repositories.into_sources(),
-        overrides,
-        false,
-    )
-    .unwrap();
-    assert_eq!(workspace.source_repos, vec![eager]);
-    assert_eq!(
-        workspace.deferred_repos,
-        vec![SourceRepo::new(
-            CodeForge::GitHub,
-            "acme".into(),
-            "on-demand".into(),
-        )]
-    );
-}
 fn team(uid: i64, name: &str) -> Team {
     Team {
         uid: ServerId::from(uid),

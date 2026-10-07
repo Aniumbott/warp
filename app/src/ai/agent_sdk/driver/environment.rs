@@ -9,7 +9,7 @@ use ai::index::full_source_code_embedding::manager::{
     CodebaseIndexManager, CodebaseIndexManagerEvent,
 };
 use chrono::Utc;
-use cloud_object_models::{CodeForge, RunRepositorySources};
+use cloud_object_models::CodeForge;
 use futures::channel::oneshot;
 use futures::future::{Either, join_all, select};
 use instant::Instant;
@@ -292,34 +292,26 @@ pub(crate) struct ResolvedRepository {
     pub preserve_origin: bool,
 }
 impl WorkspaceConfiguration {
-    pub fn from_snapshot(
+    pub fn from_legacy(
         environment: Option<&AmbientAgentEnvironment>,
-        repository_sources: RunRepositorySources,
+        additional_source_repos: Vec<SourceRepo>,
         preparation_overrides: Vec<RepositoryPreparationOverride>,
         remove_origins: bool,
     ) -> Result<Self, PrepareEnvironmentError> {
         let setup_commands = environment
             .map(|environment| environment.setup_commands.clone())
             .unwrap_or_default();
-        let (source_repos, deferred_repos) = match repository_sources {
-            RunRepositorySources::Legacy { additional } => (
-                merge_repos_deduped(
-                    environment
-                        .map(AmbientAgentEnvironment::effective_repos)
-                        .unwrap_or_default(),
-                    additional,
-                )?,
-                Vec::new(),
-            ),
-            RunRepositorySources::FactoryPlan { eager, deferred } => {
-                (merge_repos_deduped(eager, Vec::new())?, deferred)
-            }
-        };
+        let source_repos = merge_repos_deduped(
+            environment
+                .map(AmbientAgentEnvironment::effective_repos)
+                .unwrap_or_default(),
+            additional_source_repos,
+        )?;
         let clone_requests =
             repository_clone_requests(&source_repos, &preparation_overrides, remove_origins)?;
         Ok(Self {
             source_repos,
-            deferred_repos,
+            deferred_repos: Vec::new(),
             setup_commands,
             has_environment: environment.is_some(),
             clone_requests,

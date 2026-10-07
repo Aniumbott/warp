@@ -1036,7 +1036,7 @@ fn configured_and_profile_mcp_servers_wait_for_environment_setup() {
                 TerminalDriver::create_from_existing_view(driver_terminal_view, ctx);
             let mut driver = AgentDriver::new_for_test(std::env::temp_dir(), terminal_driver, ctx);
             driver.workspace = Some(
-                WorkspaceConfiguration::from_snapshot(
+                WorkspaceConfiguration::from_legacy(
                     Some(&AmbientAgentEnvironment::new(
                         "test".to_string(),
                         None,
@@ -1044,7 +1044,7 @@ fn configured_and_profile_mcp_servers_wait_for_environment_setup() {
                         String::new(),
                         vec!["environment-setup-is-still-running".to_string()],
                     )),
-                    cloud_object_models::RunRepositorySources::default(),
+                    Vec::new(),
                     Vec::new(),
                     false,
                 )

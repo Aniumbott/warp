@@ -512,7 +512,7 @@ impl AmbientAgentRunner {
                     computer_use_enabled: args.computer_use.computer_use_override(),
                     harness: harness_override,
                     harness_auth_secrets,
-                    repositories: Default::default(),
+                    additional_source_repos: None,
                 },
             );
 

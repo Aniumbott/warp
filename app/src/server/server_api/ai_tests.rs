@@ -173,6 +173,42 @@ fn execution_bootstrap_preserves_independent_secret_and_attachment_errors() {
 }
 
 #[test]
+fn execution_bootstrap_rejects_configuration_errors() {
+    let mut response = execution_bootstrap_response();
+    response["data"]["executionConfig"] = json!({
+        "__typename": "UserFacingError",
+        "error": {"__typename": "ResourceUnavailableError", "message": "Required repository is unavailable"},
+        "responseContext": {"serverVersion": null}
+    });
+    let request = mock_execution_bootstrap(response, "token-config-error");
+    let error = block_on(execution_bootstrap_server_api().get_execution_bootstrap(
+        "task-one",
+        "1",
+        "token-config-error".into(),
+    ))
+    .err()
+    .expect("configuration errors must abort bootstrap");
+    assert_eq!(error.to_string(), "Required repository is unavailable");
+    request.assert();
+}
+
+#[test]
+fn execution_bootstrap_requires_non_null_deferred_inventory() {
+    let mut response = execution_bootstrap_response();
+    response["data"]["executionConfig"]["config"]["deferredRepositories"] = Value::Null;
+    let request = mock_execution_bootstrap(response, "token-null-inventory");
+    assert!(
+        block_on(execution_bootstrap_server_api().get_execution_bootstrap(
+            "task-one",
+            "1",
+            "token-null-inventory".into(),
+        ))
+        .is_err()
+    );
+    request.assert();
+}
+
+#[test]
 fn task_status_message_input_preserves_full_platform_error() {
     let input = agent_task_status_message_input(TaskStatusUpdate {
         message: "Repository access failed.".to_string(),

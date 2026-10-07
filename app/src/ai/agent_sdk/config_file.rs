@@ -189,7 +189,7 @@ pub fn merge_with_precedence(
         computer_use_enabled,
         harness: cli.harness,
         harness_auth_secrets: cli.harness_auth_secrets,
-        repositories: Default::default(),
+        additional_source_repos: None,
     }
 }
 

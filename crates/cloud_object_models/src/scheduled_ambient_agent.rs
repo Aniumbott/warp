@@ -61,64 +61,10 @@ pub struct AgentConfigSnapshot {
     /// Authentication secrets for third-party harnesses.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub harness_auth_secrets: Option<HarnessAuthSecretsConfig>,
-    #[serde(flatten)]
-    pub repositories: RepositoryConfigSnapshot,
-}
-
-/// Flat repository wire data for task snapshots.
-#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
-pub struct RepositoryConfigSnapshot {
     /// Extra repositories the worker should clone in addition to the environment's repos.
     /// This is server-populated for per-task sources such as a GitHub webhook's origin repo.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    additional_source_repos: Option<Vec<SourceRepo>>,
-    /// Authoritative eager membership, including an empty list. Absent or null uses the legacy
-    /// environment-plus-additions membership.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    source_repos_to_clone: Option<Vec<SourceRepo>>,
-    /// On-demand inventory, never merged into eager membership.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    deferred_source_repos: Vec<SourceRepo>,
-}
-
-impl RepositoryConfigSnapshot {
-    pub fn into_sources(self) -> RunRepositorySources {
-        match self.source_repos_to_clone {
-            Some(eager) => RunRepositorySources::FactoryPlan {
-                eager,
-                deferred: self.deferred_source_repos,
-            },
-            None => RunRepositorySources::Legacy {
-                additional: self.additional_source_repos.unwrap_or_default(),
-            },
-        }
-    }
-
-    fn is_empty(&self) -> bool {
-        self.additional_source_repos.is_none()
-            && self.source_repos_to_clone.is_none()
-            && self.deferred_source_repos.is_empty()
-    }
-}
-
-/// Repository membership for one run; Factory plans cannot carry legacy additions.
-#[derive(Clone, Debug, PartialEq)]
-pub enum RunRepositorySources {
-    Legacy {
-        additional: Vec<SourceRepo>,
-    },
-    FactoryPlan {
-        eager: Vec<SourceRepo>,
-        deferred: Vec<SourceRepo>,
-    },
-}
-
-impl Default for RunRepositorySources {
-    fn default() -> Self {
-        Self::Legacy {
-            additional: Vec::new(),
-        }
-    }
+    pub additional_source_repos: Option<Vec<SourceRepo>>,
 }
 
 /// Configuration for a third-party execution harness.
@@ -206,7 +152,7 @@ impl AgentConfigSnapshot {
             computer_use_enabled,
             harness,
             harness_auth_secrets,
-            repositories,
+            additional_source_repos,
         } = self;
 
         experimental.is_none()
@@ -222,7 +168,7 @@ impl AgentConfigSnapshot {
             && computer_use_enabled.is_none()
             && harness.is_none()
             && harness_auth_secrets.is_none()
-            && repositories.is_empty()
+            && additional_source_repos.is_none()
     }
 }
 

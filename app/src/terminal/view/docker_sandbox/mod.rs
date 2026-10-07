@@ -294,9 +294,9 @@ impl TerminalView {
                     .ok_or("environment not found")?;
 
                 // Prepare the environment (clone repos, run setup commands, index codebases).
-                let workspace = WorkspaceConfiguration::from_snapshot(
+                let workspace = WorkspaceConfiguration::from_legacy(
                     Some(&environment),
-                    Default::default(),
+                    Vec::new(),
                     Vec::new(),
                     false,
                 )

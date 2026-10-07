@@ -1,7 +1,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use cloud_object_models::{CodeForge, RunRepositorySources};
+use cloud_object_models::CodeForge;
 use command::blocking::Command;
 use futures::channel::oneshot;
 use futures::executor::block_on;
@@ -867,40 +867,28 @@ fn merge_repos_supports_additional_only_and_empty_inputs() {
 }
 
 #[test]
-fn source_repos_to_clone_none_retains_legacy_merge_behavior() {
+fn legacy_workspace_merges_environment_and_task_additions_without_deferred_inventory() {
     let environment = environment_with_repos(vec![repo(CodeForge::GitHub, "WarpDotDev", "Warp")]);
     let additional = vec![repo(CodeForge::GitHub, "warpdotdev", "warp-server")];
 
+    let workspace =
+        WorkspaceConfiguration::from_legacy(Some(&environment), additional, Vec::new(), false)
+            .unwrap();
     assert_eq!(
-        WorkspaceConfiguration::from_snapshot(
-            Some(&environment),
-            RunRepositorySources::Legacy { additional },
-            Vec::new(),
-            false,
-        )
-        .unwrap()
-        .source_repos,
+        workspace.source_repos,
         vec![
             repo(CodeForge::GitHub, "WarpDotDev", "Warp"),
             repo(CodeForge::GitHub, "warpdotdev", "warp-server"),
         ]
     );
+    assert!(workspace.deferred_repos.is_empty());
 }
 
 #[test]
-fn source_repos_to_clone_some_empty_clones_nothing() {
-    let environment = environment_with_repos(vec![repo(CodeForge::GitHub, "acme", "monolith")]);
+fn resolved_empty_eager_membership_skips_preparation_with_deferred_inventory() {
     let deferred = vec![repo(CodeForge::GitLab, "platform/backend", "api")];
-    let workspace = WorkspaceConfiguration::from_snapshot(
-        Some(&environment),
-        RunRepositorySources::FactoryPlan {
-            eager: Vec::new(),
-            deferred: deferred.clone(),
-        },
-        Vec::new(),
-        false,
-    )
-    .unwrap();
+    let workspace =
+        WorkspaceConfiguration::from_resolved(Vec::new(), deferred.clone(), Vec::new()).unwrap();
     assert!(workspace.source_repos.is_empty());
     assert!(workspace.clone_requests.is_empty());
     assert_eq!(workspace.deferred_repos, deferred);
@@ -908,24 +896,24 @@ fn source_repos_to_clone_some_empty_clones_nothing() {
 }
 
 #[test]
-fn source_repos_to_clone_some_keeps_deferred_inventory_out_of_preparation() {
-    let environment = environment_with_repos(vec![repo(CodeForge::GitHub, "acme", "monolith")]);
-    let plan = vec![repo(CodeForge::GitHub, "acme", "billing")];
+fn resolved_workspace_keeps_deferred_inventory_out_of_preparation() {
+    let eager = repo(CodeForge::GitHub, "acme", "billing");
     let deferred = vec![repo(CodeForge::GitLab, "other", "billing")];
-    let workspace = WorkspaceConfiguration::from_snapshot(
-        Some(&environment),
-        RunRepositorySources::FactoryPlan {
-            eager: plan.clone(),
-            deferred: deferred.clone(),
-        },
+    let workspace = WorkspaceConfiguration::from_resolved(
+        vec![ResolvedRepository {
+            source: eager.clone(),
+            checkout: None,
+            clone_from: None,
+            preserve_origin: true,
+        }],
+        deferred.clone(),
         Vec::new(),
-        false,
     )
     .unwrap();
-    assert_eq!(workspace.source_repos, plan);
+    assert_eq!(workspace.source_repos, vec![eager.clone()]);
     assert_eq!(workspace.deferred_repos, deferred);
     assert_eq!(workspace.clone_requests.len(), 1);
-    assert_eq!(workspace.clone_requests[0].remote, plan[0]);
+    assert_eq!(workspace.clone_requests[0].remote, eager);
     assert_eq!(
         single_repo_name(&workspace.source_repos),
         Some("billing".to_owned())
@@ -933,18 +921,24 @@ fn source_repos_to_clone_some_keeps_deferred_inventory_out_of_preparation() {
 }
 
 #[test]
-fn source_repos_to_clone_some_still_applies_collision_check() {
-    let result = WorkspaceConfiguration::from_snapshot(
-        None,
-        RunRepositorySources::FactoryPlan {
-            eager: vec![
-                repo(CodeForge::GitHub, "a", "widget"),
-                repo(CodeForge::GitLab, "b", "widget"),
-            ],
-            deferred: Vec::new(),
-        },
+fn resolved_repositories_reject_clone_directory_collisions() {
+    let result = WorkspaceConfiguration::from_resolved(
+        vec![
+            ResolvedRepository {
+                source: repo(CodeForge::GitHub, "a", "widget"),
+                checkout: None,
+                clone_from: None,
+                preserve_origin: true,
+            },
+            ResolvedRepository {
+                source: repo(CodeForge::GitLab, "b", "widget"),
+                checkout: None,
+                clone_from: None,
+                preserve_origin: true,
+            },
+        ],
         Vec::new(),
-        false,
+        Vec::new(),
     );
 
     assert!(matches!(

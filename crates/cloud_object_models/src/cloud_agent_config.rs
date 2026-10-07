@@ -45,7 +45,7 @@ impl AgentConfig {
             computer_use_enabled: None,
             harness: None,
             harness_auth_secrets: None,
-            repositories: Default::default(),
+            additional_source_repos: None,
         }
     }
 }
