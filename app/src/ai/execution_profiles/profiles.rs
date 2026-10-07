@@ -224,7 +224,6 @@ impl DefaultProfileState {
 
 pub(crate) struct SessionComputerUse {
     pub enabled: bool,
-    pub model_id: Option<LLMId>,
 }
 pub struct AIExecutionProfilesModel {
     /// Authoritative persistence backend selected for this launch.
@@ -1106,11 +1105,10 @@ impl AIExecutionProfilesModel {
         &mut self,
         terminal_view_id: EntityId,
         enabled: bool,
-        model_id: Option<LLMId>,
         ctx: &mut ModelContext<Self>,
     ) {
         self.session_computer_use
-            .insert(terminal_view_id, SessionComputerUse { enabled, model_id });
+            .insert(terminal_view_id, SessionComputerUse { enabled });
         ctx.emit(AIExecutionProfilesModelEvent::UpdatedActiveProfile { terminal_view_id });
     }
 
