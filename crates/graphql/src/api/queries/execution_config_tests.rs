@@ -28,7 +28,7 @@ fn bootstrap_fetches_all_task_data_in_one_operation() {
     });
     let query = operation.query;
     assert_eq!(query.matches("executionConfig(").count(), 1);
-    assert!(query.contains("includeDeferredRepositories: true"));
+    assert!(query.contains("supportsDeferredRepositories: true"));
     assert_eq!(query.matches("taskSecrets(").count(), 1);
     assert_eq!(query.matches("task(").count(), 1);
     for field in [
