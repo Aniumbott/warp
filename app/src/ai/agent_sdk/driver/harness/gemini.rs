@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::ffi::OsString;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
@@ -68,6 +68,7 @@ impl ThirdPartyHarness for GeminiHarness {
         terminal_driver: ModelHandle<TerminalDriver>,
         _resume: Option<ResumePayload>,
         resolved_env_vars: &HashMap<OsString, OsString>,
+        skill_dirs: &[PathBuf],
         _resolved_secrets: &HashMap<String, ManagedSecretValue>,
         _resolved_mcp_servers: &HashMap<String, JSONMCPServer>,
         _third_party_harness_model_config: Option<&HarnessModelConfig>,
@@ -83,15 +84,11 @@ impl ThirdPartyHarness for GeminiHarness {
             super::super::DEFERRED_REPOSITORIES_SKILL_ENV,
         )) {
             let skill_root = harness_working_dir.join(".gemini").join("skills");
-            let source_dirs = super::skill_dirs_publish::source_dirs_from_env(
-                workspace_root,
-                resolved_env_vars.get(std::ffi::OsStr::new(ai::skills::WARP_SKILL_DIRS_ENV)),
-            );
             let published = super::skill_dirs_publish::publish_skills_for_harness(
                 &skill_root,
                 workspace_root,
                 warp_isolation_platform::detect().is_some(),
-                source_dirs.as_deref(),
+                skill_dirs,
                 true,
             )
             .map_err(|error| AgentDriverError::HarnessConfigSetupFailed {

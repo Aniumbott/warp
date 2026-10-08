@@ -32,34 +32,43 @@ fn request_scope_for_team(team_uid: ServerId) -> RequestTeamScope {
 fn execution_bootstrap_response() -> Value {
     json!({
         "data": {
-            "executionConfig": {
-                "__typename": "ExecutionConfigOutput",
-                "config": {
-                    "taskId": "task-one",
-                    "executionId": "1",
-                    "conversationId": null,
-                    "parentRunId": null,
-                    "harness": "OZ",
-                    "modelId": null,
-                    "reasoningLevel": null,
-                    "profileId": null,
-                    "mcpServersJson": "{}",
-                    "skills": [],
-                    "factorySkillDirs": [],
-                    "computerUseEnabled": false,
-                    "computerUseModelId": null,
-                    "inferenceProviders": null,
-                    "repositories": [],
-                    "deferredRepositories": [{
-                        "codeForge": "GITLAB", "owner": "platform/backend", "repo": "api"
-                    }],
-                    "setupCommands": [],
-                    "providers": null,
-                    "sessionSharingAcls": [],
-                    "skipInitialTurn": false,
-                    "idleOnCompleteSeconds": null,
-                    "idleOnFailSeconds": null,
-                    "snapshotDisabled": false
+            "task": {
+                "__typename": "TaskOutput",
+                "task": {
+                    "executionConfig": {
+                        "taskId": "task-one",
+                        "executionId": "1",
+                        "teamId": null,
+                        "conversationId": null,
+                        "parentRunId": null,
+                        "harness": "OZ",
+                        "modelId": null,
+                        "reasoningLevel": null,
+                        "profileId": null,
+                        "mcpServersJson": "{}",
+                        "skills": [],
+                        "factorySkillDirs": [],
+                        "computerUseEnabled": false,
+                        "computerUseModelId": null,
+                        "inferenceProviders": null,
+                        "repositories": [],
+                        "deferredRepositories": [{
+                            "codeForge": "GITLAB", "owner": "platform/backend", "repo": "api"
+                        }],
+                        "setupCommands": [],
+                        "providers": null,
+                        "sessionSharingAcls": [],
+                        "skipInitialTurn": false,
+                        "idleOnCompleteSeconds": null,
+                        "idleOnFailSeconds": null,
+                        "snapshotDisabled": false
+                    },
+                    "attachments": [{
+                        "fileId": "file-one",
+                        "filename": "file-one_test.txt",
+                        "downloadUrl": "https://example.com/file",
+                        "mimeType": "text/plain"
+                    }]
                 }
             },
             "taskSecrets": {
@@ -68,18 +77,6 @@ fn execution_bootstrap_response() -> Value {
                     "name": "API_KEY",
                     "value": {"__typename": "ManagedSecretRawValue", "value": "secret"}
                 }]
-            },
-            "task": {
-                "__typename": "TaskOutput",
-                "task": {
-                    "taskId": "task-one",
-                    "attachments": [{
-                        "fileId": "file-one",
-                        "filename": "file-one_test.txt",
-                        "downloadUrl": "https://example.com/file",
-                        "mimeType": "text/plain"
-                    }]
-                }
             }
         }
     })
@@ -95,7 +92,7 @@ fn mock_execution_bootstrap(response: Value, workload_token: &str) -> Mock {
         ))
         .match_body(Matcher::PartialJson(json!({
             "variables": {
-                "configInput": {"taskId": "task-one", "executionId": "1"},
+                "executionId": "1",
                 "secretsInput": {"taskId": "task-one", "workloadToken": workload_token},
                 "taskInput": {"taskId": "task-one"}
             }
@@ -141,16 +138,11 @@ fn execution_bootstrap_fetches_config_secrets_and_attachments_once() {
 }
 
 #[test]
-fn execution_bootstrap_preserves_independent_secret_and_attachment_errors() {
+fn execution_bootstrap_preserves_secret_errors_with_task_configuration() {
     let mut response = execution_bootstrap_response();
     response["data"]["taskSecrets"] = json!({
         "__typename": "UserFacingError",
         "error": {"__typename": "InvalidSecretError", "message": "Unable to access task secrets"},
-        "responseContext": {"serverVersion": null}
-    });
-    response["data"]["task"] = json!({
-        "__typename": "UserFacingError",
-        "error": {"__typename": "InvalidAttachmentError", "message": "Unable to access task"},
         "responseContext": {"serverVersion": null}
     });
     let request = mock_execution_bootstrap(response, "token-errors");
@@ -165,17 +157,14 @@ fn execution_bootstrap_preserves_independent_secret_and_attachment_errors() {
         data.secrets.unwrap_err().to_string(),
         "Unable to access task secrets"
     );
-    assert_eq!(
-        data.attachments.unwrap_err().to_string(),
-        "Unable to access task"
-    );
+    assert_eq!(data.attachments.unwrap()[0].filename, "file-one_test.txt");
     request.assert();
 }
 
 #[test]
 fn execution_bootstrap_rejects_configuration_errors() {
     let mut response = execution_bootstrap_response();
-    response["data"]["executionConfig"] = json!({
+    response["data"]["task"] = json!({
         "__typename": "UserFacingError",
         "error": {"__typename": "ResourceUnavailableError", "message": "Required repository is unavailable"},
         "responseContext": {"serverVersion": null}
@@ -195,7 +184,7 @@ fn execution_bootstrap_rejects_configuration_errors() {
 #[test]
 fn execution_bootstrap_requires_non_null_deferred_inventory() {
     let mut response = execution_bootstrap_response();
-    response["data"]["executionConfig"]["config"]["deferredRepositories"] = Value::Null;
+    response["data"]["task"]["task"]["executionConfig"]["deferredRepositories"] = Value::Null;
     let request = mock_execution_bootstrap(response, "token-null-inventory");
     assert!(
         block_on(execution_bootstrap_server_api().get_execution_bootstrap(

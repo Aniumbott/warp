@@ -44,6 +44,7 @@ pub fn is_using_api_key_for_provider_in_conversation(
     if !UserWorkspaces::as_ref(app).is_byo_api_key_enabled(app) {
         return false;
     }
+
     let manager = ApiKeyManager::as_ref(app);
 
     match provider {
@@ -823,6 +824,7 @@ pub struct LLMPreferences {
     // normalized against the GUI profile default, while explicit child-run
     // selections remain pinned even when they currently equal the fallback.
     base_llm_for_terminal_view: HashMap<EntityId, LLMId>,
+    computer_use_llm_for_terminal_view: HashMap<EntityId, Option<LLMId>>,
     /// Synthetic `LLMInfo` entries built from the user's `ApiKeyManager.custom_endpoints` so
     /// custom models surface in the model picker and resolve through `info_for_id` lookups.
     /// Each entry's `id` is the model's `config_key` (UUID), which is also what flows out to
@@ -880,6 +882,7 @@ impl LLMPreferences {
             agent_mode_models_unavailable: HashMap::new(),
             last_update: None,
             base_llm_for_terminal_view,
+            computer_use_llm_for_terminal_view: HashMap::new(),
             custom_llms,
             custom_model_routers: Vec::new(),
             last_seen_chatgpt_subscription_connected: None,
@@ -1236,15 +1239,13 @@ impl LLMPreferences {
         app: &'a AppContext,
         terminal_view_id: Option<EntityId>,
     ) -> &'a LLMInfo {
-        let profiles = AIExecutionProfilesModel::as_ref(app);
-        let profile = profiles.active_profile(terminal_view_id, app);
+        let profile = AIExecutionProfilesModel::as_ref(app).active_profile(terminal_view_id, app);
 
         let available = self.get_computer_use_available(scope.team_uid(), app);
-        let selected_model = match terminal_view_id.and_then(|id| profiles.session_computer_use(id))
-        {
-            Some(selection) => selection.model_id.as_ref(),
-            None => profile.data().computer_use_model.as_ref(),
-        };
+        let selected_model = terminal_view_id
+            .and_then(|id| self.computer_use_llm_for_terminal_view.get(&id))
+            .map(Option::as_ref)
+            .unwrap_or_else(|| profile.data().computer_use_model.as_ref());
         selected_model
             .and_then(|id| available.info_for_id(id))
             .unwrap_or_else(|| self.get_default_computer_use_model(scope, app))
@@ -1274,6 +1275,22 @@ impl LLMPreferences {
         available
             .usable_default_llm_info(app)
             .unwrap_or_else(|| available.default_llm_info())
+    }
+
+    #[cfg(not(target_family = "wasm"))]
+    pub(crate) fn set_computer_use_llm_override(
+        &mut self,
+        terminal_view_id: EntityId,
+        model_id: Option<LLMId>,
+    ) {
+        self.computer_use_llm_for_terminal_view
+            .insert(terminal_view_id, model_id);
+    }
+
+    #[cfg(not(target_family = "wasm"))]
+    pub(crate) fn clear_computer_use_llm_override(&mut self, terminal_view_id: EntityId) {
+        self.computer_use_llm_for_terminal_view
+            .remove(&terminal_view_id);
     }
 
     /// Helper to get the AvailableLLMs for computer_use.
@@ -2308,6 +2325,7 @@ impl LLMPreferences {
             agent_mode_models_unavailable: HashMap::new(),
             last_update: None,
             base_llm_for_terminal_view: HashMap::new(),
+            computer_use_llm_for_terminal_view: HashMap::new(),
             custom_llms,
             custom_model_routers: Vec::new(),
             last_seen_chatgpt_subscription_connected: None,

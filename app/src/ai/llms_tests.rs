@@ -1342,12 +1342,11 @@ fn computer_use_model_selection_is_transient_and_resolves_available_models() {
                 Some("profile-model".into()),
                 ctx,
             );
-            profiles.set_session_computer_use(
-                terminal_view_id,
-                true,
-                Some("computer-use-model".into()),
-                ctx,
-            );
+            profiles.set_session_computer_use(terminal_view_id, true, ctx);
+        });
+        preferences.update(&mut app, |preferences, _| {
+            preferences
+                .set_computer_use_llm_override(terminal_view_id, Some("computer-use-model".into()));
         });
         preferences.read(&app, |preferences, ctx| {
             assert_eq!(
@@ -1362,8 +1361,8 @@ fn computer_use_model_selection_is_transient_and_resolves_available_models() {
                 "computer-use-model"
             );
         });
-        profiles.update(&mut app, |profiles, ctx| {
-            profiles.set_session_computer_use(terminal_view_id, true, None, ctx);
+        preferences.update(&mut app, |preferences, _| {
+            preferences.set_computer_use_llm_override(terminal_view_id, None);
         });
         preferences.read(&app, |preferences, ctx| {
             assert_eq!(
@@ -1380,6 +1379,9 @@ fn computer_use_model_selection_is_transient_and_resolves_available_models() {
         });
         profiles.update(&mut app, |profiles, ctx| {
             profiles.clear_session_computer_use(terminal_view_id, ctx);
+        });
+        preferences.update(&mut app, |preferences, _| {
+            preferences.clear_computer_use_llm_override(terminal_view_id);
         });
         preferences.read(&app, |preferences, ctx| {
             assert_eq!(
