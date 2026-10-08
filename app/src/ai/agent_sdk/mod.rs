@@ -1194,6 +1194,7 @@ impl AgentDriverRunner {
         foreground: &ModelSpawner<Self>,
         task_id_str: &str,
         args: &RunAgentArgs,
+        use_factory_repositories: bool,
     ) -> Result<(), AgentDriverError> {
         // The gh CLI only covers github.com, so this must not replace the
         // server fetch below — other forges (GitLab, Azure DevOps) get their
@@ -1243,7 +1244,7 @@ impl AgentDriverRunner {
         let credentials = match Self::fetch_task_git_credentials(
             task_id_str.clone(),
             Arc::clone(&ai_client),
-            args.execution_id.is_some(),
+            use_factory_repositories,
         )
         .await
         {
@@ -1398,7 +1399,13 @@ impl AgentDriverRunner {
         .map_err(AgentDriverError::ConfigBuildFailed)?;
 
         if let Some(task_id_str) = args.task_id.as_ref() {
-            Self::bootstrap_git_credentials_for_task(foreground, task_id_str, &args).await?;
+            Self::bootstrap_git_credentials_for_task(
+                foreground,
+                task_id_str,
+                &args,
+                execution_data.is_some(),
+            )
+            .await?;
         }
         if let Some(ExecutionTaskData {
             server_api: execution_server_api,

@@ -27,7 +27,7 @@ use warpui::{ModelContext, ModelSpawner, SingletonEntity};
 use super::cache_setup;
 use super::environment_checkout_protocol::{
     CheckoutBatch, CheckoutFailureKind, CheckoutReport, CheckoutRequest,
-    CloneFailureIdentityDiagnostics, ResolvedHeads, is_valid_git_object_id, parse_resolved_head_sha,
+    CloneFailureIdentityDiagnostics, ResolvedHeads, parse_resolved_head_sha,
     sanitize_git_author_name, sanitize_git_credential_username,
 };
 use super::terminal::TerminalDriver;
@@ -236,7 +236,6 @@ fn environment_snapshot(
         repositories,
     }
 }
-
 
 /// Workspace inputs used to prepare a run's repositories, commands, and skills.
 #[derive(Default)]
@@ -480,39 +479,44 @@ pub(crate) fn build_deferred_repos_instruction(
             .then_with(|| a.repo.to_lowercase().cmp(&b.repo.to_lowercase()))
     });
 
-    let entries = sorted_deferred.iter().map(|repo| {
-        let forge = repo.code_forge.unwrap_or_default();
-        let clone_url = repo.https_clone_url();
-        let identity = format!("{forge} {}/{}", repo.owner, repo.repo);
-        let code_forge = repository_forge_for_repo(repo).ok_or_else(|| {
-            PrepareEnvironmentError::UnsupportedRepositoryForge {
-                repo_name: format!("{}/{}", repo.owner, repo.repo),
-            }
-        })?;
-        let request = serde_json::to_string(&CheckoutRequest {
-            source: RepositoryIdentity {
-                code_forge,
-                repo_owner: repo.owner.clone(),
-                repo_name: repo.repo.clone(),
-            },
-            checkout_name: repo.repo.clone(),
-            head: None,
-            fetch_branch_only: false,
+    let entries = sorted_deferred
+        .iter()
+        .map(|repo| {
+            let forge = repo.code_forge.unwrap_or_default();
+            let clone_url = repo.https_clone_url();
+            let identity = format!("{forge} {}/{}", repo.owner, repo.repo);
+            let code_forge = repository_forge_for_repo(repo).ok_or_else(|| {
+                PrepareEnvironmentError::UnsupportedRepositoryForge {
+                    repo_name: format!("{}/{}", repo.owner, repo.repo),
+                }
+            })?;
+            let request = serde_json::to_string(&CheckoutRequest {
+                source: RepositoryIdentity {
+                    code_forge,
+                    repo_owner: repo.owner.clone(),
+                    repo_name: repo.repo.clone(),
+                },
+                checkout_name: repo.repo.clone(),
+                head: None,
+                fetch_branch_only: false,
+            })
+            .map_err(|_| PrepareEnvironmentError::CheckoutHelper {
+                reason: "could not serialize deferred checkout request",
+            })?;
+            let target = if let Some(conflicting) =
+                target_name_conflict(repo, eager_repos, &sorted_deferred)
+            {
+                format!(
+                    "- {identity} — {clone_url}; target '{}' conflicts with {conflicting}; choose an unused absolute target",
+                    repo.repo
+                )
+            } else {
+                let target = deferred_repo_target(working_dir, &repo.repo);
+                format!("- {identity} — {clone_url}; preferred target: {target}")
+            };
+            Ok(format!("{target}; checkout request: {request}"))
         })
-        .map_err(|_| PrepareEnvironmentError::CheckoutHelper {
-            reason: "could not serialize deferred checkout request",
-        })?;
-        let target = if let Some(conflicting) = target_name_conflict(repo, eager_repos, &sorted_deferred) {
-            format!(
-                "- {identity} — {clone_url}; target '{}' conflicts with {conflicting}; choose an unused absolute target",
-                repo.repo
-            )
-        } else {
-            let target = deferred_repo_target(working_dir, &repo.repo);
-            format!("- {identity} — {clone_url}; preferred target: {target}")
-        };
-        Ok(format!("{target}; checkout request: {request}"))
-    }).collect::<Result<Vec<_>, PrepareEnvironmentError>>()?;
+        .collect::<Result<Vec<_>, PrepareEnvironmentError>>()?;
     let command = build_checkout_helper_command(
         executable,
         Path::new("<requests-file>"),

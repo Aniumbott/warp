@@ -53,13 +53,26 @@ fn strict_checkout_preserves_existing_work_and_reports_partial_success() {
             assert_eq!(report.outcomes.len(), 2);
             assert_eq!(report.outcomes[0].request_index, 0);
             assert_eq!(report.outcomes[0].failure, Some(CheckoutFailureKind::Clone));
-            assert!(report.outcomes[0].diagnostics.contains("target already exists"));
+            assert!(
+                report.outcomes[0]
+                    .diagnostics
+                    .contains("target already exists")
+            );
             assert_eq!(report.outcomes[1].request_index, 1);
             assert_eq!(report.outcomes[1].failure, None);
-            assert_eq!(git(&fixture.work().join("fresh"), &["rev-parse", "HEAD"]), fixture.base());
+            assert_eq!(
+                git(&fixture.work().join("fresh"), &["rev-parse", "HEAD"]),
+                fixture.base()
+            );
             assert_eq!(git(&target, &["show-ref"]), original_refs);
-            assert_eq!(fs::read(target.join(".git/config")).unwrap(), original_config);
-            assert_eq!(fs::read_to_string(target.join("README")).unwrap(), "uncommitted work\n");
+            assert_eq!(
+                fs::read(target.join(".git/config")).unwrap(),
+                original_config
+            );
+            assert_eq!(
+                fs::read_to_string(target.join("README")).unwrap(),
+                "uncommitted work\n"
+            );
         },
     );
 }
