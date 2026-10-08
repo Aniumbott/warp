@@ -222,9 +222,6 @@ impl DefaultProfileState {
     }
 }
 
-pub(crate) struct SessionComputerUse {
-    pub enabled: bool,
-}
 pub struct AIExecutionProfilesModel {
     /// Authoritative persistence backend selected for this launch.
     source: ProfileSource,
@@ -249,6 +246,10 @@ pub struct AIExecutionProfilesModel {
     /// Only contains entries for non-default profiles.
     active_profiles_per_session: HashMap<EntityId, ExecutionProfileId>,
     session_computer_use: HashMap<EntityId, SessionComputerUse>,
+}
+
+pub(crate) struct SessionComputerUse {
+    pub enabled: bool,
 }
 
 impl AIExecutionProfilesModel {

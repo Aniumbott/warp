@@ -2292,6 +2292,11 @@ impl LLMPreferences {
             .vision_supported
     }
 
+    pub(crate) fn reset_session_overrides(&mut self) {
+        self.base_llm_for_terminal_view.clear();
+        self.computer_use_llm_for_terminal_view.clear();
+    }
+
     pub fn get_base_llm_override(&self, terminal_view_id: EntityId) -> Option<String> {
         if let Some(override_str) = self
             .base_llm_for_terminal_view

@@ -1290,8 +1290,7 @@ fn preferences_for_profile_model_tests(ctx: &mut ModelContext<LLMPreferences>) -
 }
 
 #[cfg(not(target_family = "wasm"))]
-#[test]
-fn computer_use_model_selection_is_transient_and_resolves_available_models() {
+fn with_computer_use_test_context(f: impl FnOnce(&mut App) + 'static) {
     App::test((), |mut app| async move {
         initialize_settings_for_tests(&mut app);
         app.add_singleton_model(|_| ServerApiProvider::new_for_test());
@@ -1304,7 +1303,7 @@ fn computer_use_model_selection_is_transient_and_resolves_available_models() {
         app.add_singleton_model(SyncQueue::mock);
         app.add_singleton_model(UpdateManager::mock);
         app.add_singleton_model(|_| TemplatableMCPServerManager::default());
-        let profiles = app.add_singleton_model(|ctx| {
+        app.add_singleton_model(|ctx| {
             AIExecutionProfilesModel::new(
                 &LaunchMode::Tui {
                     entrypoint: TuiEntryPoint::Interactive {
@@ -1315,7 +1314,7 @@ fn computer_use_model_selection_is_transient_and_resolves_available_models() {
                 ctx,
             )
         });
-        let preferences = app.add_singleton_model(|ctx| {
+        app.add_singleton_model(|ctx| {
             UserWorkspaces::handle(ctx).update(ctx, |workspaces, _| {
                 workspaces.set_workspaceless_models_by_feature(ModelsByFeature {
                     computer_use: Some(
@@ -1335,20 +1334,91 @@ fn computer_use_model_selection_is_transient_and_resolves_available_models() {
             });
             LLMPreferences::for_test(Vec::new())
         });
+        f(&mut app);
+    });
+}
+
+#[cfg(not(target_family = "wasm"))]
+#[test]
+fn session_computer_use_enablement_is_scoped_to_the_terminal() {
+    with_computer_use_test_context(|app| {
+        let profiles = AIExecutionProfilesModel::handle(app);
         let terminal_view_id = EntityId::new();
-        profiles.update(&mut app, |profiles, ctx| {
+        profiles.update(app, |profiles, ctx| {
+            profiles.set_session_computer_use(terminal_view_id, true, ctx);
+        });
+
+        profiles.read(app, |profiles, _| {
+            assert_eq!(
+                profiles
+                    .session_computer_use(terminal_view_id)
+                    .map(|selection| selection.enabled),
+                Some(true)
+            );
+            assert!(profiles.session_computer_use(EntityId::new()).is_none());
+        });
+    });
+}
+
+#[cfg(not(target_family = "wasm"))]
+#[test]
+fn clearing_session_computer_use_removes_the_selection() {
+    with_computer_use_test_context(|app| {
+        let profiles = AIExecutionProfilesModel::handle(app);
+        let terminal_view_id = EntityId::new();
+        profiles.update(app, |profiles, ctx| {
+            profiles.set_session_computer_use(terminal_view_id, true, ctx);
+        });
+
+        profiles.update(app, |profiles, ctx| {
+            profiles.clear_session_computer_use(terminal_view_id, ctx);
+        });
+
+        profiles.read(app, |profiles, _| {
+            assert!(profiles.session_computer_use(terminal_view_id).is_none());
+        });
+    });
+}
+
+#[cfg(not(target_family = "wasm"))]
+#[test]
+fn resetting_profiles_clears_session_computer_use() {
+    with_computer_use_test_context(|app| {
+        let profiles = AIExecutionProfilesModel::handle(app);
+        let terminal_view_id = EntityId::new();
+        profiles.update(app, |profiles, ctx| {
+            profiles.set_session_computer_use(terminal_view_id, true, ctx);
+        });
+
+        profiles.update(app, |profiles, _| profiles.reset(true));
+
+        profiles.read(app, |profiles, _| {
+            assert!(profiles.session_computer_use(terminal_view_id).is_none());
+        });
+    });
+}
+
+#[cfg(not(target_family = "wasm"))]
+#[test]
+fn computer_use_model_override_takes_precedence_over_the_profile() {
+    with_computer_use_test_context(|app| {
+        let profiles = AIExecutionProfilesModel::handle(app);
+        let preferences = LLMPreferences::handle(app);
+        let terminal_view_id = EntityId::new();
+        profiles.update(app, |profiles, ctx| {
             profiles.set_computer_use_model(
                 &profiles.default_profile_id(),
                 Some("profile-model".into()),
                 ctx,
             );
-            profiles.set_session_computer_use(terminal_view_id, true, ctx);
         });
-        preferences.update(&mut app, |preferences, _| {
+
+        preferences.update(app, |preferences, _| {
             preferences
                 .set_computer_use_llm_override(terminal_view_id, Some("computer-use-model".into()));
         });
-        preferences.read(&app, |preferences, ctx| {
+
+        preferences.read(app, |preferences, ctx| {
             assert_eq!(
                 preferences
                     .get_active_computer_use_model(
@@ -1361,10 +1431,29 @@ fn computer_use_model_selection_is_transient_and_resolves_available_models() {
                 "computer-use-model"
             );
         });
-        preferences.update(&mut app, |preferences, _| {
+    });
+}
+
+#[cfg(not(target_family = "wasm"))]
+#[test]
+fn computer_use_default_override_ignores_the_profile_model() {
+    with_computer_use_test_context(|app| {
+        let profiles = AIExecutionProfilesModel::handle(app);
+        let preferences = LLMPreferences::handle(app);
+        let terminal_view_id = EntityId::new();
+        profiles.update(app, |profiles, ctx| {
+            profiles.set_computer_use_model(
+                &profiles.default_profile_id(),
+                Some("profile-model".into()),
+                ctx,
+            );
+        });
+
+        preferences.update(app, |preferences, _| {
             preferences.set_computer_use_llm_override(terminal_view_id, None);
         });
-        preferences.read(&app, |preferences, ctx| {
+
+        preferences.read(app, |preferences, ctx| {
             assert_eq!(
                 preferences
                     .get_active_computer_use_model(
@@ -1377,13 +1466,25 @@ fn computer_use_model_selection_is_transient_and_resolves_available_models() {
                 "computer-use-agent-auto"
             );
         });
-        profiles.update(&mut app, |profiles, ctx| {
-            profiles.clear_session_computer_use(terminal_view_id, ctx);
+    });
+}
+
+#[cfg(not(target_family = "wasm"))]
+#[test]
+fn computer_use_model_falls_back_to_the_profile_without_a_terminal_override() {
+    with_computer_use_test_context(|app| {
+        let profiles = AIExecutionProfilesModel::handle(app);
+        let preferences = LLMPreferences::handle(app);
+        let terminal_view_id = EntityId::new();
+        profiles.update(app, |profiles, ctx| {
+            profiles.set_computer_use_model(
+                &profiles.default_profile_id(),
+                Some("profile-model".into()),
+                ctx,
+            );
         });
-        preferences.update(&mut app, |preferences, _| {
-            preferences.clear_computer_use_llm_override(terminal_view_id);
-        });
-        preferences.read(&app, |preferences, ctx| {
+
+        preferences.read(app, |preferences, ctx| {
             assert_eq!(
                 preferences
                     .get_active_computer_use_model(
@@ -1394,6 +1495,144 @@ fn computer_use_model_selection_is_transient_and_resolves_available_models() {
                     .id
                     .as_str(),
                 "profile-model"
+            );
+        });
+    });
+}
+
+#[cfg(not(target_family = "wasm"))]
+#[test]
+fn clearing_computer_use_model_override_restores_the_profile_model() {
+    with_computer_use_test_context(|app| {
+        let profiles = AIExecutionProfilesModel::handle(app);
+        let preferences = LLMPreferences::handle(app);
+        let terminal_view_id = EntityId::new();
+        profiles.update(app, |profiles, ctx| {
+            profiles.set_computer_use_model(
+                &profiles.default_profile_id(),
+                Some("profile-model".into()),
+                ctx,
+            );
+        });
+        preferences.update(app, |preferences, _| {
+            preferences
+                .set_computer_use_llm_override(terminal_view_id, Some("computer-use-model".into()));
+        });
+
+        preferences.update(app, |preferences, _| {
+            preferences.clear_computer_use_llm_override(terminal_view_id);
+        });
+
+        preferences.read(app, |preferences, ctx| {
+            assert_eq!(
+                preferences
+                    .get_active_computer_use_model(
+                        &TeamlessScopeForTest,
+                        ctx,
+                        Some(terminal_view_id)
+                    )
+                    .id
+                    .as_str(),
+                "profile-model"
+            );
+        });
+    });
+}
+
+#[cfg(not(target_family = "wasm"))]
+#[test]
+fn computer_use_model_override_falls_back_to_default_for_an_unknown_model() {
+    with_computer_use_test_context(|app| {
+        let preferences = LLMPreferences::handle(app);
+        let terminal_view_id = EntityId::new();
+
+        preferences.update(app, |preferences, _| {
+            preferences
+                .set_computer_use_llm_override(terminal_view_id, Some("unknown-model".into()));
+        });
+
+        preferences.read(app, |preferences, ctx| {
+            assert_eq!(
+                preferences
+                    .get_active_computer_use_model(
+                        &TeamlessScopeForTest,
+                        ctx,
+                        Some(terminal_view_id)
+                    )
+                    .id
+                    .as_str(),
+                "computer-use-agent-auto"
+            );
+        });
+    });
+}
+
+#[cfg(not(target_family = "wasm"))]
+#[test]
+fn resetting_session_model_overrides_restores_the_computer_use_profile_model() {
+    with_computer_use_test_context(|app| {
+        let profiles = AIExecutionProfilesModel::handle(app);
+        let preferences = LLMPreferences::handle(app);
+        let terminal_view_id = EntityId::new();
+        profiles.update(app, |profiles, ctx| {
+            profiles.set_computer_use_model(
+                &profiles.default_profile_id(),
+                Some("profile-model".into()),
+                ctx,
+            );
+        });
+        preferences.update(app, |preferences, _| {
+            preferences
+                .set_computer_use_llm_override(terminal_view_id, Some("computer-use-model".into()));
+        });
+
+        preferences.update(app, |preferences, _| preferences.reset_session_overrides());
+
+        preferences.read(app, |preferences, ctx| {
+            assert_eq!(
+                preferences
+                    .get_active_computer_use_model(
+                        &TeamlessScopeForTest,
+                        ctx,
+                        Some(terminal_view_id)
+                    )
+                    .id
+                    .as_str(),
+                "profile-model"
+            );
+        });
+    });
+}
+
+#[cfg(not(target_family = "wasm"))]
+#[test]
+fn resetting_session_model_overrides_restores_the_agent_mode_profile_model() {
+    with_computer_use_test_context(|app| {
+        let preferences = LLMPreferences::handle(app);
+        let terminal_view_id = EntityId::new();
+        preferences.update(app, |preferences, ctx| {
+            preferences.add_agent_mode_model_for_test(
+                &TeamlessScopeForTest,
+                agent_llm("claude-opus", "Opus"),
+                ctx,
+            );
+            preferences.set_agent_mode_llm_override(
+                &TeamlessScopeForTest,
+                terminal_view_id,
+                "claude-opus".into(),
+                ctx,
+            );
+        });
+
+        preferences.update(app, |preferences, _| preferences.reset_session_overrides());
+
+        preferences.read(app, |preferences, ctx| {
+            assert_eq!(
+                preferences
+                    .get_active_base_model(&TeamlessScopeForTest, ctx, Some(terminal_view_id))
+                    .id
+                    .as_str(),
+                "auto"
             );
         });
     });
