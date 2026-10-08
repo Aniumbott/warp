@@ -111,6 +111,9 @@ pub(crate) mod cache_setup;
 mod checkpoint_coordinator;
 pub(crate) mod cloud_provider;
 pub(crate) mod environment;
+#[cfg(feature = "local_fs")]
+pub(crate) mod environment_checkout;
+mod environment_checkout_protocol;
 mod error_classification;
 mod failure_output;
 pub(crate) mod git_credentials;

@@ -157,6 +157,22 @@ fn bedrock_oidc_credentials_config(
     })
 }
 
+pub(crate) fn run_environment_checkout(
+    args: &warp_cli::environment_checkout::EnvironmentCheckoutArgs,
+) -> anyhow::Result<()> {
+    #[cfg(feature = "local_fs")]
+    {
+        driver::environment_checkout::run(args)
+    }
+    #[cfg(not(feature = "local_fs"))]
+    {
+        let _ = args;
+        Err(anyhow::anyhow!(
+            "environment checkout requires filesystem support"
+        ))
+    }
+}
+
 /// Run a Warp CLI command.
 #[tracing::instrument(name = "agent_sdk::run", skip_all, err, fields(tags.cloud_agent = true))]
 pub fn run(
@@ -184,6 +200,7 @@ fn dispatch_command(
             }
             environment::run(ctx, global_options, environment_cmd)
         }
+        CliCommand::EnvironmentCheckout(args) => run_environment_checkout(&args),
         CliCommand::MCP(mcp_cmd) => mcp::run(ctx, global_options, mcp_cmd),
         CliCommand::Run(task_cmd) => run_task(ctx, global_options, task_cmd),
         CliCommand::Model(model_cmd) => model::run(ctx, global_options, model_cmd),
@@ -2117,6 +2134,7 @@ fn command_requires_auth(command: &CliCommand) -> bool {
             ModelCommand::List(_) => true,
         },
         CliCommand::MemoryStore(_) => true,
+        CliCommand::EnvironmentCheckout(_) => false,
         CliCommand::Memory(_) => true,
         CliCommand::Login => false,
         CliCommand::Logout => false,
@@ -2342,6 +2360,7 @@ fn command_to_telemetry_event(command: &CliCommand) -> CliTelemetryEvent {
             CliTelemetryEvent::EnvironmentImageList
         }
         CliCommand::MCP(MCPCommand::List) => CliTelemetryEvent::MCPList,
+        CliCommand::EnvironmentCheckout(_) => CliTelemetryEvent::EnvironmentCheckout,
         CliCommand::Run(TaskCommand::List(_)) => CliTelemetryEvent::TaskList,
         CliCommand::Run(TaskCommand::Get(args)) => {
             if args.conversation {
