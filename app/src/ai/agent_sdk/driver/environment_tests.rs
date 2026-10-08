@@ -653,7 +653,7 @@ fn test_working_dir() -> PathBuf {
 #[test]
 fn deferred_instruction_absent_when_nothing_deferred() {
     let eager = vec![repo(CodeForge::GitHub, "acme", "monolith")];
-    assert!(build_deferred_repos_instruction(&test_working_dir(), &eager, &[]).is_none());
+    assert!(build_deferred_repos_instruction(&test_working_dir(), &eager, &[], Path::new("/opt/oz"), ShellType::Bash).unwrap().is_none());
 }
 
 #[test]
@@ -663,7 +663,7 @@ fn deferred_instruction_lists_github_and_nested_gitlab_repos_in_order() {
         repo(CodeForge::GitHub, "acme", "billing"),
     ];
     let instruction =
-        build_deferred_repos_instruction(&test_working_dir(), &[], &deferred).unwrap();
+        build_deferred_repos_instruction(&test_working_dir(), &[], &deferred, Path::new("/opt/oz"), ShellType::Bash).unwrap().unwrap();
 
     let github_pos = instruction.find("GitHub acme/billing").unwrap();
     let gitlab_pos = instruction.find("GitLab platform/backend/api").unwrap();
@@ -684,7 +684,7 @@ fn deferred_instruction_targets_absolute_paths_under_the_single_eager_repo_auto_
     let working_dir = test_working_dir();
     let eager = vec![repo(CodeForge::GitHub, "acme", "eager-repo")];
     let deferred = vec![repo(CodeForge::GitHub, "acme", "billing")];
-    let instruction = build_deferred_repos_instruction(&working_dir, &eager, &deferred).unwrap();
+    let instruction = build_deferred_repos_instruction(&working_dir, &eager, &deferred, Path::new("/opt/oz"), ShellType::Bash).unwrap().unwrap();
 
     assert!(instruction.contains("preferred target: /home/agent/billing"));
 }
@@ -701,8 +701,8 @@ fn deferred_instruction_is_deterministic_regardless_of_input_order() {
     ];
 
     assert_eq!(
-        build_deferred_repos_instruction(&test_working_dir(), &[], &a),
-        build_deferred_repos_instruction(&test_working_dir(), &[], &b)
+        build_deferred_repos_instruction(&test_working_dir(), &[], &a, Path::new("/opt/oz"), ShellType::Bash).unwrap(),
+        build_deferred_repos_instruction(&test_working_dir(), &[], &b, Path::new("/opt/oz"), ShellType::Bash).unwrap()
     );
 }
 
@@ -726,7 +726,7 @@ fn deferred_instruction_flags_conflict_with_an_eager_repo_target() {
     let eager = vec![repo(CodeForge::GitHub, "acme", "widget")];
     let deferred = vec![repo(CodeForge::GitLab, "other", "widget")];
     let instruction =
-        build_deferred_repos_instruction(&test_working_dir(), &eager, &deferred).unwrap();
+        build_deferred_repos_instruction(&test_working_dir(), &eager, &deferred, Path::new("/opt/oz"), ShellType::Bash).unwrap().unwrap();
 
     assert!(!instruction.contains("preferred target: /home/agent/widget"));
     assert!(instruction.contains("target 'widget' conflicts with GitHub acme/widget"));
@@ -736,7 +736,7 @@ fn deferred_instruction_flags_conflict_with_an_eager_repo_target() {
 fn deferred_instruction_never_contains_secret_bearing_content() {
     let deferred = vec![repo(CodeForge::GitHub, "acme", "billing")];
     let instruction =
-        build_deferred_repos_instruction(&test_working_dir(), &[], &deferred).unwrap();
+        build_deferred_repos_instruction(&test_working_dir(), &[], &deferred, Path::new("/opt/oz"), ShellType::Bash).unwrap().unwrap();
 
     assert!(!instruction.contains("WARP_FACTORY_REPO_CLONE_URL"));
     assert!(
@@ -751,6 +751,56 @@ fn deferred_instruction_never_contains_secret_bearing_content() {
     }
 }
 
+#[test]
+fn deferred_inventory_produces_valid_requests_and_a_quoted_runtime() {
+    let instruction = build_deferred_repos_instruction(
+        &test_working_dir(),
+        &[],
+        &[
+            repo(CodeForge::GitHub, "Acme", "Billing"),
+            repo(CodeForge::GitLab, "Platform/Backend", "Api"),
+            repo(CodeForge::AzureDevOps, "Acme/Project", "Tools"),
+        ],
+        Path::new("/opt/oz build/oz'preview"),
+        ShellType::Bash,
+    )
+    .unwrap()
+    .unwrap();
+    let runtime: serde_json::Value = serde_json::from_str(
+        instruction.lines().find_map(|line| line.strip_prefix("Checkout runtime: ")).unwrap(),
+    ).unwrap();
+    assert_eq!(runtime["working_dir"], "/home/agent");
+    assert_eq!(
+        runtime["command_template"],
+        "'/opt/oz build/oz'\\''preview' environment-checkout --requests-file '<requests-file>' --report-file '<report-file>' --fail-if-target-exists"
+    );
+    let requests = instruction.lines().filter_map(|line| {
+        line.split_once("; checkout request: ").map(|(_, request)| {
+            serde_json::from_str::<CheckoutRequest>(request).unwrap()
+        })
+    }).collect::<Vec<_>>();
+    let batch = CheckoutBatch { working_dir: test_working_dir(), repositories: requests };
+    batch.validate().unwrap();
+    assert_eq!(batch.repositories.len(), 3);
+    let github = batch.repositories.iter().find(|request| request.source.code_forge == RepositoryForge::GitHub).unwrap();
+    assert_eq!(github.source.repo_owner, "Acme");
+    assert_eq!(github.source.repo_name, "Billing");
+    assert_eq!(github.checkout_name, "Billing");
+}
+
+#[test]
+fn deferred_inventory_rejects_unsupported_forges() {
+    assert!(matches!(
+        build_deferred_repos_instruction(
+            &test_working_dir(),
+            &[],
+            &[repo(CodeForge::Unknown, "acme", "billing")],
+            Path::new("/opt/oz"),
+            ShellType::Bash,
+        ),
+        Err(PrepareEnvironmentError::UnsupportedRepositoryForge { .. })
+    ));
+}
 #[test]
 fn single_repo_name_returns_none_for_zero_or_many_repos() {
     let no_repos = Vec::<SourceRepo>::new();

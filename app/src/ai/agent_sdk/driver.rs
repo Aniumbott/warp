@@ -2324,12 +2324,18 @@ impl AgentDriver {
             let mut workspace = workspace.ok_or(AgentDriverError::InvalidRuntimeState)?;
             let source_repos = workspace.source_repos.clone();
             let has_deferred_repositories = !workspace.deferred_repos.is_empty();
-            if let Some(instruction) = environment::build_deferred_repos_instruction(
-                &foreground.spawn(|me, _| me.working_dir.clone()).await?,
-                &source_repos,
-                &workspace.deferred_repos,
-            ) {
-                inject_deferred_repos_instruction(&mut task.prompt, instruction);
+            if has_deferred_repositories {
+                let executable = std::env::current_exe()
+                    .map_err(|error| AgentDriverError::ConfigBuildFailed(error.into()))?;
+                if let Some(instruction) = environment::build_deferred_repos_instruction(
+                    &foreground.spawn(|me, _| me.working_dir.clone()).await?,
+                    &source_repos,
+                    &workspace.deferred_repos,
+                    &executable,
+                    session_shell_type.unwrap_or(ShellType::Bash),
+                )? {
+                    inject_deferred_repos_instruction(&mut task.prompt, instruction);
+                }
             }
             // The Factory definition checkout is run-scoped: the dispatch decides
             // whether this run gets one by attaching the clone variables,

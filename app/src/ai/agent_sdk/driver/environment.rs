@@ -463,9 +463,11 @@ pub(crate) fn build_deferred_repos_instruction(
     working_dir: &Path,
     eager_repos: &[SourceRepo],
     deferred_repos: &[SourceRepo],
-) -> Option<String> {
+    executable: &Path,
+    shell_type: ShellType,
+) -> Result<Option<String>, PrepareEnvironmentError> {
     if deferred_repos.is_empty() {
-        return None;
+        return Ok(None);
     }
 
     let mut sorted_deferred = deferred_repos.to_vec();
@@ -482,7 +484,25 @@ pub(crate) fn build_deferred_repos_instruction(
         let forge = repo.code_forge.unwrap_or_default();
         let clone_url = repo.https_clone_url();
         let identity = format!("{forge} {}/{}", repo.owner, repo.repo);
-        if let Some(conflicting) = target_name_conflict(repo, eager_repos, &sorted_deferred) {
+        let code_forge = repository_forge_for_repo(repo).ok_or_else(|| {
+            PrepareEnvironmentError::UnsupportedRepositoryForge {
+                repo_name: format!("{}/{}", repo.owner, repo.repo),
+            }
+        })?;
+        let request = serde_json::to_string(&CheckoutRequest {
+            source: RepositoryIdentity {
+                code_forge,
+                repo_owner: repo.owner.clone(),
+                repo_name: repo.repo.clone(),
+            },
+            checkout_name: repo.repo.clone(),
+            head: None,
+            fetch_branch_only: false,
+        })
+        .map_err(|_| PrepareEnvironmentError::CheckoutHelper {
+            reason: "could not serialize deferred checkout request",
+        })?;
+        let target = if let Some(conflicting) = target_name_conflict(repo, eager_repos, &sorted_deferred) {
             format!(
                 "- {identity} — {clone_url}; target '{}' conflicts with {conflicting}; choose an unused absolute target",
                 repo.repo
@@ -490,14 +510,26 @@ pub(crate) fn build_deferred_repos_instruction(
         } else {
             let target = deferred_repo_target(working_dir, &repo.repo);
             format!("- {identity} — {clone_url}; preferred target: {target}")
-        }
+        };
+        Ok(format!("{target}; checkout request: {request}"))
+    }).collect::<Result<Vec<_>, PrepareEnvironmentError>>()?;
+    let command = build_checkout_helper_command(
+        executable,
+        Path::new("<requests-file>"),
+        Path::new("<report-file>"),
+        false,
+        shell_type,
+    );
+    let runtime = serde_json::json!({
+        "working_dir": working_dir.to_string_lossy(),
+        "command_template": format!("{command} --fail-if-target-exists"),
     });
 
-    Some(format!(
-        "Deferred Factory repositories (not yet cloned):\n{}\n\
+    Ok(Some(format!(
+        "Deferred Factory repositories (not yet cloned):\nCheckout runtime: {runtime}\n{}\n\
          When needed, read the built-in factory-deferred-repositories skill before cloning.",
-        entries.collect::<Vec<_>>().join("\n\n")
-    ))
+        entries.join("\n\n")
+    )))
 }
 
 /// Uses POSIX separators because the target belongs to the agent's shell, not the host OS.
