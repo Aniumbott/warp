@@ -94,6 +94,7 @@ fn paired_execution_launch_keeps_inventory_separate_from_eager_membership() {
                 .unwrap()
             });
             assert_eq!(options.workspace.source_repos.len(), expected_eager_count);
+            assert!(options.use_factory_repositories);
             if expected_eager_count != 0 {
                 assert_eq!(
                     options.workspace.source_repos,
@@ -338,6 +339,7 @@ pub(crate) fn agent_driver_options() -> AgentDriverOptions {
     AgentDriverOptions {
         working_dir: std::env::current_dir().unwrap(),
         task_id: None,
+        use_factory_repositories: false,
         experimental: None,
         parent_run_id: None,
         should_share: false,

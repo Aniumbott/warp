@@ -197,6 +197,125 @@ fn execution_bootstrap_requires_non_null_deferred_inventory() {
     request.assert();
 }
 
+fn mock_git_credentials(input: Value, response: Value, operation: &str) -> Mock {
+    let mut server = warp_core::channel::ChannelState::mock_server();
+    server
+        .mock("POST", "/graphql/v2")
+        .match_query(Matcher::UrlEncoded("op".into(), operation.into()))
+        .match_request(move |request| {
+            let body: Value = serde_json::from_slice(request.body().unwrap()).unwrap();
+            body["variables"]["input"] == input
+        })
+        .with_status(200)
+        .with_body(response.to_string())
+        .expect(1)
+        .create()
+}
+
+#[test]
+fn factory_git_credentials_keep_opt_in_for_bootstrap_and_partial_refresh() {
+    for accepts_partial_refresh in [false, true] {
+        let request = mock_git_credentials(
+            json!({
+                "taskId": "task-one",
+                "workloadToken": "token-request",
+                "acceptsPartialRefresh": accepts_partial_refresh,
+                "useFactoryRepositories": true
+            }),
+            json!({"data": {"taskGitCredentials": {
+                "__typename": "TaskGitCredentialsOutput",
+                "credentials": [],
+                "failedHosts": []
+            }}}),
+            "TaskGitCredentials",
+        );
+        let response = block_on(execution_bootstrap_server_api().get_task_git_credentials(
+            "task-one".into(),
+            "token-request".into(),
+            accepts_partial_refresh,
+            true,
+        ))
+        .unwrap();
+        assert!(response.credentials.is_empty());
+        assert!(response.failed_hosts.is_empty());
+        request.assert();
+    }
+}
+
+#[test]
+fn factory_git_credentials_do_not_fall_back_after_schema_errors() {
+    let request = mock_git_credentials(
+        json!({
+            "taskId": "task-one",
+            "workloadToken": "token-request",
+            "acceptsPartialRefresh": false,
+            "useFactoryRepositories": true
+        }),
+        json!({"errors": [{
+            "message": "Cannot query field \"failedHosts\" on type \"TaskGitCredentialsOutput\""
+        }]}),
+        "TaskGitCredentials",
+    );
+    let mut server = warp_core::channel::ChannelState::mock_server();
+    let fallback = server
+        .mock("POST", "/graphql/v2")
+        .match_query(Matcher::UrlEncoded(
+            "op".into(),
+            "TaskGitCredentialsLegacy".into(),
+        ))
+        .expect(0)
+        .create();
+
+    let error = block_on(execution_bootstrap_server_api().get_task_git_credentials(
+        "task-one".into(),
+        "token-request".into(),
+        false,
+        true,
+    ))
+    .err()
+    .expect("Factory credential scope must not fall back after schema errors");
+    let TaskGitCredentialsError::Request(error) = error else {
+        panic!("expected the credential schema request error");
+    };
+    assert!(error.to_string().contains("failedHosts"));
+    request.assert();
+    fallback.assert();
+}
+
+#[test]
+fn legacy_git_credentials_keep_partial_refresh_schema_fallback() {
+    let request = mock_git_credentials(
+        json!({
+            "taskId": "task-one",
+            "workloadToken": "token-request",
+            "acceptsPartialRefresh": true
+        }),
+        json!({"errors": [{
+            "message": "Cannot query field \"failedHosts\" on type \"TaskGitCredentialsOutput\""
+        }]}),
+        "TaskGitCredentials",
+    );
+    let fallback = mock_git_credentials(
+        json!({"taskId": "task-one", "workloadToken": "token-request"}),
+        json!({"data": {"taskGitCredentials": {
+            "__typename": "TaskGitCredentialsOutput",
+            "credentials": []
+        }}}),
+        "TaskGitCredentialsLegacy",
+    );
+
+    let response = block_on(execution_bootstrap_server_api().get_task_git_credentials(
+        "task-one".into(),
+        "token-request".into(),
+        true,
+        false,
+    ))
+    .unwrap();
+    assert!(response.credentials.is_empty());
+    request.assert();
+    fallback.assert();
+}
+
 #[test]
 fn task_status_message_input_preserves_full_platform_error() {
     let input = agent_task_status_message_input(TaskStatusUpdate {

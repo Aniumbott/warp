@@ -44,7 +44,7 @@ pub struct BootstrapTaskOutput {
 #[derive(cynic::QueryFragment, Debug)]
 #[cynic(graphql_type = "Task", variables = "ExecutionBootstrapVariables")]
 pub struct BootstrapTask {
-    #[arguments(executionId: $execution_id)]
+    #[arguments(executionId: $execution_id, includeDeferredRepositories: true)]
     pub execution_config: ExecutionConfiguration,
     pub attachments: Vec<TaskAttachment>,
 }

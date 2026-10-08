@@ -647,6 +647,7 @@ fn build_execution_task_and_options(
     let options = AgentDriverOptions {
         working_dir,
         task_id: Some(task_id),
+        use_factory_repositories: true,
         experimental: None,
         parent_run_id: config.parent_run_id.map(|id| id.into_inner()),
         should_share: FeatureFlag::AgentSharedSessions.is_enabled(),
@@ -1125,6 +1126,7 @@ impl AgentDriverRunner {
     async fn fetch_task_git_credentials(
         task_id_str: String,
         ai_client: Arc<dyn AIClient>,
+        use_factory_repositories: bool,
     ) -> Result<Vec<GitCredential>, TaskGitCredentialsError> {
         with_retry(
             "Git credentials bootstrap",
@@ -1141,7 +1143,12 @@ impl AgentDriverRunner {
                     .map_err(|error| TaskGitCredentialsError::Request(error.into()))?
                     .token;
                     let response = ai_client
-                        .get_task_git_credentials(task_id_str, workload_token, false)
+                        .get_task_git_credentials(
+                            task_id_str,
+                            workload_token,
+                            false,
+                            use_factory_repositories,
+                        )
                         .await?;
                     driver::git_credentials::credentials_for_bootstrap(response)
                         .map_err(TaskGitCredentialsError::Request)
@@ -1213,6 +1220,7 @@ impl AgentDriverRunner {
         let credentials = match Self::fetch_task_git_credentials(
             task_id_str.clone(),
             Arc::clone(&ai_client),
+            args.execution_id.is_some(),
         )
         .await
         {
@@ -1466,6 +1474,7 @@ impl AgentDriverRunner {
                 let driver_options = driver::AgentDriverOptions {
                     working_dir: working_dir.clone(),
                     task_id,
+                    use_factory_repositories: false,
                     experimental: None,
                     parent_run_id: None,
                     should_share,

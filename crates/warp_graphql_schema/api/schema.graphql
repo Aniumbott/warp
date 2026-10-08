@@ -3812,7 +3812,7 @@ type Task {
   """
   Configuration for the active cloud execution. Requires the execution's workload token.
   """
-  executionConfig(executionId: ID!): ExecutionConfiguration!
+  executionConfig(executionId: ID!, includeDeferredRepositories: Boolean = false): ExecutionConfiguration!
 
   """The ID of the task."""
   taskId: ID!
@@ -3869,6 +3869,7 @@ input TaskGitCredentialsInput {
   partial list.
   """
   acceptsPartialRefresh: Boolean
+  useFactoryRepositories: Boolean
 
   """The ID of the task."""
   taskId: ID!
