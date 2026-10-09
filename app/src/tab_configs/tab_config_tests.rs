@@ -612,10 +612,7 @@ type = "terminal"
 directory = "~/code"
 "#;
     let config: TabConfig = toml::from_str(toml_str).expect("Should parse with color");
-    assert_eq!(
-        config.color,
-        Some(crate::themes::theme::AnsiColorIdentifier::Blue)
-    );
+    assert_eq!(config.color, Some(crate::tab::TabColor::Blue));
 }
 
 #[test]

@@ -2,8 +2,7 @@ use warpui::integration::AssertionCallback;
 use warpui::{async_assert, async_assert_eq};
 
 use crate::integration_testing::view_getters::workspace_view;
-use crate::tab::SelectedTabColor;
-use crate::themes::theme::AnsiColorIdentifier;
+use crate::tab::{SelectedTabColor, TabColor};
 use crate::workspace::tab_group::TabGroupId;
 
 pub fn assert_focused_tab_index(tab_index: usize) -> AssertionCallback {
@@ -32,7 +31,7 @@ pub fn assert_focused_tab_index(tab_index: usize) -> AssertionCallback {
 /// belongs to is a failure rather than something the caller can omit.
 pub fn assert_tab_groups(
     expected_memberships: Vec<Option<usize>>,
-    expected_groups: Vec<(Option<&'static str>, Option<AnsiColorIdentifier>)>,
+    expected_groups: Vec<(Option<&'static str>, Option<TabColor>)>,
 ) -> AssertionCallback {
     Box::new(move |app, window_id| {
         let workspace = workspace_view(app, window_id);

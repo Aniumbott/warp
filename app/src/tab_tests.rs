@@ -7,7 +7,7 @@ use super::{
     TAB_ACTIVATE_LAST_BINDING_NAME, TabShortcutModifierState, next_tab_color,
     tab_activate_binding_name, tab_group_menu_entry_flags,
 };
-use crate::themes::theme::AnsiColorIdentifier;
+use crate::tab::TabColor;
 use crate::ui_components::color_dot::TAB_COLOR_OPTIONS;
 use crate::workspace::tab_group::{TabGroup, TabGroupId};
 
@@ -182,7 +182,88 @@ fn next_tab_color_follows_the_canonical_palette_and_clears_after_the_last_color(
         SelectedTabColor::Color(TAB_COLOR_OPTIONS[0])
     );
     assert_eq!(
-        next_tab_color(Some(AnsiColorIdentifier::White)),
+        next_tab_color(Some(TabColor::White)),
         SelectedTabColor::Color(TAB_COLOR_OPTIONS[0])
     );
+}
+
+#[test]
+fn next_tab_color_cycles_through_all_twelve_colors_then_clears() {
+    assert_eq!(TAB_COLOR_OPTIONS.len(), 12);
+    let mut current = None;
+    let mut visited = Vec::new();
+    loop {
+        match next_tab_color(current) {
+            SelectedTabColor::Color(color) => {
+                visited.push(color);
+                current = Some(color);
+            }
+            SelectedTabColor::Cleared => break,
+            SelectedTabColor::Unset => panic!("next_tab_color never returns Unset"),
+        }
+    }
+    assert_eq!(visited, TAB_COLOR_OPTIONS.to_vec());
+}
+
+#[test]
+fn tab_color_deserializes_legacy_values_and_round_trips_bright_ones() {
+    assert_eq!(
+        serde_yaml::from_str::<TabColor>("red").unwrap(),
+        TabColor::Red
+    );
+    assert_eq!(
+        serde_yaml::from_str::<TabColor>("white").unwrap(),
+        TabColor::White
+    );
+    for color in TAB_COLOR_OPTIONS {
+        let yaml = serde_yaml::to_string(&color).unwrap();
+        assert_eq!(serde_yaml::from_str::<TabColor>(&yaml).unwrap(), color);
+    }
+    assert_eq!(
+        serde_yaml::to_string(&TabColor::BrightRed)
+            .unwrap()
+            .trim_start_matches("---")
+            .trim(),
+        "bright_red"
+    );
+    assert_eq!(
+        serde_yaml::from_str::<TabColor>("bright_red").unwrap(),
+        TabColor::BrightRed
+    );
+}
+
+#[test]
+fn selected_tab_color_yaml_round_trips_and_reads_legacy_form() {
+    // The form sqlite persists for `SelectedTabColor`.
+    for selected in [
+        SelectedTabColor::Unset,
+        SelectedTabColor::Cleared,
+        SelectedTabColor::Color(TabColor::Blue),
+        SelectedTabColor::Color(TabColor::BrightMagenta),
+    ] {
+        let yaml = serde_yaml::to_string(&selected).unwrap();
+        assert_eq!(
+            serde_yaml::from_str::<SelectedTabColor>(&yaml).unwrap(),
+            selected
+        );
+    }
+    // Values written before bright colors existed.
+    let legacy = serde_yaml::to_string(&SelectedTabColor::Color(TabColor::Red)).unwrap();
+    assert!(legacy.contains("red"), "unexpected form: {legacy}");
+    assert_eq!(
+        serde_yaml::from_str::<SelectedTabColor>(&legacy).unwrap(),
+        SelectedTabColor::Color(TabColor::Red)
+    );
+}
+
+#[test]
+fn tab_color_display_keeps_legacy_labels_and_labels_bright_variants() {
+    assert_eq!(TabColor::Red.to_string(), "Red");
+    assert_eq!(TabColor::BrightRed.to_string(), "Bright Red");
+    assert_eq!(<&'static str>::from(TabColor::BrightRed), "bright_red");
+    assert_eq!(
+        "bright_red".parse::<TabColor>().unwrap(),
+        TabColor::BrightRed
+    );
+    assert_eq!("RED".parse::<TabColor>().unwrap(), TabColor::Red);
 }

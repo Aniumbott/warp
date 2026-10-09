@@ -527,11 +527,11 @@ pub fn test_with_launch_config_with_no_active_pane() -> Builder {
 /// - group "Orphan", which no tab joins. Restore must not put it in workspace
 ///   state, where nothing could reach it.
 pub fn test_launch_config_restores_tab_groups() -> Builder {
+    use warp::TabColor;
     use warp::integration_testing::workspace::assert_tab_groups;
     use warp::launch_configs::launch_config::{
         LaunchConfig, PaneMode, PaneTemplateType, TabGroupTemplate, TabTemplate, WindowTemplate,
     };
-    use warp::themes::theme::AnsiColorIdentifier;
 
     FeatureFlag::GroupedTabs.set_enabled(true);
 
@@ -559,7 +559,7 @@ pub fn test_launch_config_restores_tab_groups() -> Builder {
                 tab_groups: vec![
                     TabGroupTemplate {
                         name: Some("Backend".to_owned()),
-                        color: Some(AnsiColorIdentifier::Blue),
+                        color: Some(TabColor::Blue),
                         collapsed: false,
                         pinned: false,
                     },
@@ -571,7 +571,7 @@ pub fn test_launch_config_restores_tab_groups() -> Builder {
                     },
                     TabGroupTemplate {
                         name: Some("Orphan".to_owned()),
-                        color: Some(AnsiColorIdentifier::Red),
+                        color: Some(TabColor::Red),
                         collapsed: false,
                         pinned: false,
                     },
@@ -618,7 +618,7 @@ pub fn test_launch_config_restores_tab_groups() -> Builder {
                     // workspace to hold exactly these, so a memberless group
                     // left behind would fail here.
                     vec![
-                        (Some("Backend"), Some(AnsiColorIdentifier::Blue)),
+                        (Some("Backend"), Some(TabColor::Blue)),
                         (Some("Frontend"), None),
                     ],
                 )),
@@ -635,11 +635,11 @@ pub fn test_launch_config_restores_tab_groups() -> Builder {
 /// `start_index + tab_index` arithmetic landed one slot late -- grouping a
 /// pre-existing tab and leaving a restored one out.
 pub fn test_launch_config_restores_tab_groups_into_active_window() -> Builder {
+    use warp::TabColor;
     use warp::integration_testing::workspace::assert_tab_groups;
     use warp::launch_configs::launch_config::{
         LaunchConfig, PaneMode, PaneTemplateType, TabGroupTemplate, TabTemplate, WindowTemplate,
     };
-    use warp::themes::theme::AnsiColorIdentifier;
 
     FeatureFlag::GroupedTabs.set_enabled(true);
 
@@ -680,7 +680,7 @@ pub fn test_launch_config_restores_tab_groups_into_active_window() -> Builder {
                 tab_groups: vec![
                     TabGroupTemplate {
                         name: Some("Backend".to_owned()),
-                        color: Some(AnsiColorIdentifier::Blue),
+                        color: Some(TabColor::Blue),
                         collapsed: false,
                         pinned: false,
                     },
@@ -743,7 +743,7 @@ pub fn test_launch_config_restores_tab_groups_into_active_window() -> Builder {
                     // then the pre-existing "last" tab -- still ungrouped.
                     vec![None, Some(0), Some(0), Some(1), None],
                     vec![
-                        (Some("Backend"), Some(AnsiColorIdentifier::Blue)),
+                        (Some("Backend"), Some(TabColor::Blue)),
                         (Some("Frontend"), None),
                     ],
                 )),
@@ -759,11 +759,11 @@ pub fn test_launch_config_restores_tab_groups_into_active_window() -> Builder {
 /// that already holds unpinned tabs therefore used to leave the pinned group
 /// stranded in the middle of the list, which no other code path can produce.
 pub fn test_launch_config_restores_pinned_tab_group_into_pinned_prefix() -> Builder {
+    use warp::TabColor;
     use warp::integration_testing::workspace::assert_tab_groups;
     use warp::launch_configs::launch_config::{
         LaunchConfig, PaneMode, PaneTemplateType, TabGroupTemplate, TabTemplate, WindowTemplate,
     };
-    use warp::themes::theme::AnsiColorIdentifier;
 
     FeatureFlag::GroupedTabs.set_enabled(true);
     FeatureFlag::PinnedTabs.set_enabled(true);
@@ -806,7 +806,7 @@ pub fn test_launch_config_restores_pinned_tab_group_into_pinned_prefix() -> Buil
                 tab_groups: vec![
                     TabGroupTemplate {
                         name: Some("Backend".to_owned()),
-                        color: Some(AnsiColorIdentifier::Blue),
+                        color: Some(TabColor::Blue),
                         collapsed: false,
                         pinned: true,
                     },
@@ -871,7 +871,7 @@ pub fn test_launch_config_restores_pinned_tab_group_into_pinned_prefix() -> Buil
                     // [None, Some(0), Some(0), Some(1), None].
                     vec![Some(0), Some(0), None, Some(1), None],
                     vec![
-                        (Some("Backend"), Some(AnsiColorIdentifier::Blue)),
+                        (Some("Backend"), Some(TabColor::Blue)),
                         (Some("Frontend"), None),
                     ],
                 ))
@@ -890,11 +890,11 @@ pub fn test_launch_config_restores_pinned_tab_group_into_pinned_prefix() -> Buil
 /// inside the host group's run, leaving two runs of one id -- which
 /// `tab_bar_slots` renders as two separate containers for the same group.
 pub fn test_launch_config_restore_keeps_existing_group_contiguous() -> Builder {
+    use warp::TabColor;
     use warp::integration_testing::workspace::assert_tab_groups;
     use warp::launch_configs::launch_config::{
         LaunchConfig, PaneMode, PaneTemplateType, TabGroupTemplate, TabTemplate, WindowTemplate,
     };
-    use warp::themes::theme::AnsiColorIdentifier;
 
     FeatureFlag::GroupedTabs.set_enabled(true);
 
@@ -923,7 +923,7 @@ pub fn test_launch_config_restore_keeps_existing_group_contiguous() -> Builder {
             windows: vec![WindowTemplate {
                 tab_groups: vec![TabGroupTemplate {
                     name: Some("Existing".to_owned()),
-                    color: Some(AnsiColorIdentifier::Green),
+                    color: Some(TabColor::Green),
                     collapsed: false,
                     pinned: false,
                 }],
@@ -988,7 +988,7 @@ pub fn test_launch_config_restore_keeps_existing_group_contiguous() -> Builder {
                     // the move this reads [Some(0), None, None, Some(0)] --
                     // one group id in two runs.
                     vec![Some(0), Some(0), None, None],
-                    vec![(Some("Existing"), Some(AnsiColorIdentifier::Green))],
+                    vec![(Some("Existing"), Some(TabColor::Green))],
                 ))
                 // The config's active tab is "first", which the move carried
                 // past the group.

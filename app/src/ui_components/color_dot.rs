@@ -2,7 +2,7 @@ use pathfinder_color::ColorU;
 use pathfinder_geometry::vector::vec2f;
 use ui_components::tooltip::{Params as TooltipParams, Tooltip as TooltipComponent};
 use ui_components::{Component as _, Options as ComponentOptions};
-use warp_core::ui::theme::{AnsiColorIdentifier, Fill as ThemeFill};
+use warp_core::ui::theme::Fill as ThemeFill;
 use warpui::elements::{
     Border, ChildAnchor, ConstrainedBox, Container, CornerRadius, Element, Hoverable,
     MouseStateHandle, OffsetPositioning, ParentAnchor, ParentElement, ParentOffsetBounds, Radius,
@@ -11,17 +11,29 @@ use warpui::elements::{
 use warpui::platform::Cursor;
 
 use crate::appearance::Appearance;
+use crate::tab::TabColor;
 use crate::ui_components::icons::Icon;
 
 const COLOR_DOT_SIZE: f32 = 16.;
+/// Dot plus its 2px selection ring on each side.
+pub(crate) const COLOR_DOT_OUTER_SIZE: f32 = COLOR_DOT_SIZE + 4.;
 
-pub(crate) const TAB_COLOR_OPTIONS: [AnsiColorIdentifier; 6] = [
-    AnsiColorIdentifier::Red,
-    AnsiColorIdentifier::Green,
-    AnsiColorIdentifier::Yellow,
-    AnsiColorIdentifier::Blue,
-    AnsiColorIdentifier::Magenta,
-    AnsiColorIdentifier::Cyan,
+/// The leading `TAB_COLOR_OPTIONS` that are normal ANSI colors; the rest are bright.
+pub(crate) const NORMAL_TAB_COLOR_COUNT: usize = 6;
+
+pub(crate) const TAB_COLOR_OPTIONS: [TabColor; 12] = [
+    TabColor::Red,
+    TabColor::Green,
+    TabColor::Yellow,
+    TabColor::Blue,
+    TabColor::Magenta,
+    TabColor::Cyan,
+    TabColor::BrightRed,
+    TabColor::BrightGreen,
+    TabColor::BrightYellow,
+    TabColor::BrightBlue,
+    TabColor::BrightMagenta,
+    TabColor::BrightCyan,
 ];
 
 /// Renders a hoverable color dot with selection ring, tooltip, and pointer cursor.

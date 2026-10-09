@@ -1,9 +1,8 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use warp_core::ui::theme::AnsiColorIdentifier;
-
 use super::compute_candidate_paths;
+use crate::tab::TabColor;
 use crate::workspace::tab_settings::{DirectoryTabColor, DirectoryTabColors};
 
 fn colors(entries: &[(&str, DirectoryTabColor)]) -> DirectoryTabColors {
@@ -40,7 +39,7 @@ fn test_filters_out_existing_non_suppressed_entries() {
         ("/nonexistent/unassigned", DirectoryTabColor::Unassigned),
         (
             "/nonexistent/colored",
-            DirectoryTabColor::Color(AnsiColorIdentifier::Red),
+            DirectoryTabColor::Color(TabColor::Red),
         ),
     ]);
 

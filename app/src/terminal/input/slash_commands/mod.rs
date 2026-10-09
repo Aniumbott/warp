@@ -17,7 +17,6 @@ use warp_cli::agent::Harness;
 use warp_core::features::FeatureFlag;
 use warp_core::send_telemetry_from_ctx;
 use warp_core::ui::appearance::Appearance;
-use warp_core::ui::theme::AnsiColorIdentifier;
 use warp_errors::report_error;
 #[cfg(feature = "local_fs")]
 use warp_util::path::{CleanPathResult, LineAndColumnArg, expand_session_home};
@@ -52,7 +51,7 @@ use crate::search::slash_command_menu::{SlashCommandId, StaticCommand};
 use crate::server::ids::SyncId;
 use crate::server::telemetry::{AgentModeAutoDetectionSettingOrigin, SlashCommandAcceptedDetails};
 use crate::settings::AISettings;
-use crate::tab::SelectedTabColor;
+use crate::tab::{SelectedTabColor, TabColor};
 use crate::terminal::input::decorations::InputBackgroundJobOptions;
 use crate::terminal::input::inline_menu::{InlineMenuAction, InlineMenuType};
 use crate::terminal::input::message_bar::Message;
@@ -660,7 +659,7 @@ impl Input {
                 let supported_options = || {
                     color_dot::TAB_COLOR_OPTIONS
                         .iter()
-                        .map(|c| c.to_string().to_ascii_lowercase())
+                        .map(|c| <&'static str>::from(*c).to_owned())
                         .chain(std::iter::once("none".to_owned()))
                         .collect::<Vec<_>>()
                         .join(", ")
@@ -684,7 +683,7 @@ impl Input {
                     SelectedTabColor::Cleared
                 } else {
                     let parsed = arg
-                        .parse::<AnsiColorIdentifier>()
+                        .parse::<TabColor>()
                         .ok()
                         .filter(|c| color_dot::TAB_COLOR_OPTIONS.contains(c));
                     match parsed {

@@ -6,7 +6,6 @@ use std::time::Duration;
 use pathfinder_geometry::rect::RectF;
 use pathfinder_geometry::vector::{Vector2F, vec2f};
 use settings::Setting as _;
-use warp::cmd_or_ctrl_shift;
 use warp::features::FeatureFlag;
 use warp::integration_testing::clipboard::assert_clipboard_contains_string;
 use warp::integration_testing::command_palette::assert_command_palette_is_closed;
@@ -34,9 +33,9 @@ use warp::integration_testing::workspace::{
 use warp::search::command_palette::mixer::CommandPaletteItemAction;
 use warp::settings::PaneSettings;
 use warp::terminal::shell::ShellType;
-use warp::themes::theme::AnsiColorIdentifier;
 use warp::workspace::tab_settings::{TabSettings, VerticalTabsDisplayGranularity};
 use warp::workspace::{NEW_TAB_BUTTON_POSITION_ID, WorkspaceAction};
+use warp::{TabColor, cmd_or_ctrl_shift};
 use warpui_core::event::{Event, ModifiersState};
 use warpui_core::integration::{AssertionCallback, AssertionOutcome, StepDataMap, TestStep};
 use warpui_core::keymap::DescriptionContext;
@@ -111,7 +110,7 @@ fn first_vertical_tab_pane_row_position_id(
     vertical_tab_pane_row_position_id_for_pane_index(app, window_id, 0)
 }
 
-fn assert_tab_color(expected: Option<AnsiColorIdentifier>) -> AssertionCallback {
+fn assert_tab_color(expected: Option<TabColor>) -> AssertionCallback {
     Box::new(move |app, window_id| {
         let workspace = workspace_view(app, window_id);
         workspace.read(app, |workspace, _| {
@@ -124,10 +123,7 @@ fn assert_tab_color(expected: Option<AnsiColorIdentifier>) -> AssertionCallback 
     })
 }
 
-fn with_cycle_tab_color_invariants(
-    step: TestStep,
-    expected: Option<AnsiColorIdentifier>,
-) -> TestStep {
+fn with_cycle_tab_color_invariants(step: TestStep, expected: Option<TabColor>) -> TestStep {
     step.add_assertion(assert_tab_color(expected))
         .add_assertion(assert_focused_tab_index(0))
         .add_assertion(assert_focused_pane_index(0, 0))
@@ -572,19 +568,19 @@ pub fn test_cycle_active_tab_color_with_keybinding() -> Builder {
         .with_step(with_cycle_tab_color_invariants(
             new_step_with_default_assertions("Cycle active tab from no color to red")
                 .with_keystrokes(&["ctrl-alt-shift-U"]),
-            Some(AnsiColorIdentifier::Red),
+            Some(TabColor::Red),
         ))
         .with_step(with_cycle_tab_color_invariants(
             new_step_with_default_assertions("Cycle active tab from red to green")
                 .with_keystrokes(&["ctrl-alt-shift-U"]),
-            Some(AnsiColorIdentifier::Green),
+            Some(TabColor::Green),
         ))
         .with_step(
             TestStep::new("Select exact cycle color action in Command Palette")
                 .with_keystrokes(&[cmd_or_ctrl_shift("p")])
                 .with_typed_characters(&[CYCLE_TAB_COLOR_LABEL])
                 .add_assertion(assert_selected_cycle_tab_color_binding())
-                .add_assertion(assert_tab_color(Some(AnsiColorIdentifier::Green)))
+                .add_assertion(assert_tab_color(Some(TabColor::Green)))
                 .add_assertion(assert_focused_tab_index(0))
                 .add_assertion(assert_focused_pane_index(0, 0))
                 .add_assertion(assert_input_editor_contents(0, CYCLE_TAB_COLOR_SENTINEL)),
@@ -593,7 +589,7 @@ pub fn test_cycle_active_tab_color_with_keybinding() -> Builder {
             TestStep::new("Run cycle color action from Command Palette")
                 .with_keystrokes(&["enter"])
                 .add_assertion(assert_command_palette_is_closed()),
-            Some(AnsiColorIdentifier::Yellow),
+            Some(TabColor::Yellow),
         ))
 }
 

@@ -335,7 +335,7 @@ pub static RENAME_CONVERSATION: LazyLock<StaticCommand> = LazyLock::new(|| Stati
 static SET_TAB_COLOR_HINT: LazyLock<String> = LazyLock::new(|| {
     let mut hint = String::from("<");
     for color in color_dot::TAB_COLOR_OPTIONS {
-        hint.push_str(&color.to_string().to_ascii_lowercase());
+        hint.push_str(<&'static str>::from(color));
         hint.push('|');
     }
     hint.push_str("none>");

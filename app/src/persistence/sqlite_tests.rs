@@ -29,11 +29,10 @@ use crate::persistence::{
     BlockCompleted, ModelEvent, PersistedDataScope, PersistenceScope, StartedCommandMetadata,
 };
 use crate::server::ids::{ClientId, ServerId};
-use crate::tab::SelectedTabColor;
+use crate::tab::{SelectedTabColor, TabColor};
 use crate::terminal::ShellLaunchData;
 use crate::terminal::model::block::SerializedBlock;
 use crate::terminal::model::session::SessionId;
-use crate::themes::theme::AnsiColorIdentifier;
 use crate::workspace::tab_group::TabGroupId;
 use crate::workspaces::team::{MembershipRole, Team, TeamMember};
 use crate::workspaces::user_profiles::UserProfileWithUID;
@@ -733,7 +732,7 @@ fn test_sqlite_round_trips_tab_groups() {
             tab_groups: vec![TabGroupSnapshot {
                 id: group_id,
                 name: Some("Backend".to_string()),
-                color: SelectedTabColor::Color(AnsiColorIdentifier::Blue),
+                color: SelectedTabColor::Color(TabColor::Blue),
                 collapsed: true,
                 pinned: false,
             }],
@@ -757,7 +756,7 @@ fn test_sqlite_round_trips_tab_groups() {
     assert_eq!(restored_group.name.as_deref(), Some("Backend"));
     assert_eq!(
         restored_group.color,
-        SelectedTabColor::Color(AnsiColorIdentifier::Blue)
+        SelectedTabColor::Color(TabColor::Blue)
     );
     assert!(restored_group.collapsed);
 

@@ -16,7 +16,7 @@ use warp_core::ui::Icon as WarpIcon;
 use warp_core::ui::color::blend::Blend;
 use warp_core::ui::color::coloru_with_opacity;
 use warp_core::ui::theme::color::internal_colors;
-use warp_core::ui::theme::{AnsiColorIdentifier, Fill as WarpThemeFill, WarpTheme};
+use warp_core::ui::theme::{Fill as WarpThemeFill, WarpTheme};
 use warpui::elements::{
     Border, ChildAnchor, Clipped, ClippedScrollStateHandle, ClippedScrollable, ConstrainedBox,
     Container, CornerRadius, CrossAxisAlignment, DispatchEventResult, DragAxis, DragBarSide,
@@ -56,7 +56,7 @@ use crate::pane_group::{
 };
 use crate::safe_triangle::SafeTriangle;
 use crate::tab::{
-    SelectedTabColor, TAB_INDICATOR_SYNCED_COLOR, TabData, reveals_tab_shortcut_hints,
+    SelectedTabColor, TAB_INDICATOR_SYNCED_COLOR, TabColor, TabData, reveals_tab_shortcut_hints,
     tab_activate_binding_name, tab_position_id,
 };
 use crate::terminal::cli_agent_sessions::CLIAgentSessionsModel;
@@ -2914,7 +2914,7 @@ fn render_grouped_tabs_header(
     let group_color_fill: Option<ThemeFill> = group
         .color
         .resolve(None)
-        .map(|c| c.to_ansi_color(&theme.terminal_colors().normal).into());
+        .map(|c| c.to_ansi_color(theme.terminal_colors()).into());
 
     let mut hoverable = Hoverable::new(mouse_states.header.clone(), move |state| {
         let border_fill = if is_header_selected {
@@ -3140,7 +3140,7 @@ fn render_grouped_tab_container(
         let group_color_fill: Option<ThemeFill> = group
             .color
             .resolve(None)
-            .map(|c| c.to_ansi_color(&theme.terminal_colors().normal).into());
+            .map(|c| c.to_ansi_color(theme.terminal_colors()).into());
         let is_highlighted = hover_state.is_hovered() || any_member_active;
         let background = if let Some(color) = group_color_fill {
             // Highlight a colored tab group when it is hovered or active,
@@ -5753,9 +5753,9 @@ fn compute_tab_group_color_mode(
     // A manual color override applies to the whole tab.
     if !matches!(tab.selected_color, SelectedTabColor::Unset) {
         return match tab.selected_color.resolve(tab.default_directory_color) {
-            Some(color) => TabGroupColorMode::Uniform(
-                color.to_ansi_color(&theme.terminal_colors().normal).into(),
-            ),
+            Some(color) => {
+                TabGroupColorMode::Uniform(color.to_ansi_color(theme.terminal_colors()).into())
+            }
             None => TabGroupColorMode::None,
         };
     }
@@ -5764,7 +5764,7 @@ fn compute_tab_group_color_mode(
         .directory_tab_colors
         .value()
         .clone();
-    let per_pane: HashMap<PaneId, Option<AnsiColorIdentifier>> = visible_pane_ids
+    let per_pane: HashMap<PaneId, Option<TabColor>> = visible_pane_ids
         .iter()
         .map(|&pane_id| {
             let color = match pane_group.terminal_view_from_pane_id(pane_id, app) {
@@ -5809,7 +5809,7 @@ fn compute_tab_group_color_mode(
         .collect();
 
     let has_uncolored = per_pane.values().any(|c| c.is_none());
-    let mut distinct_colors: Vec<AnsiColorIdentifier> = Vec::new();
+    let mut distinct_colors: Vec<TabColor> = Vec::new();
     for color in per_pane.values().flatten() {
         if !distinct_colors.contains(color) {
             distinct_colors.push(*color);
@@ -5823,12 +5823,12 @@ fn compute_tab_group_color_mode(
         TabGroupColorMode::None
     } else if is_uniform {
         let color = distinct_colors[0];
-        TabGroupColorMode::Uniform(color.to_ansi_color(&theme.terminal_colors().normal).into())
+        TabGroupColorMode::Uniform(color.to_ansi_color(theme.terminal_colors()).into())
     } else {
         let theme_map = per_pane
             .into_iter()
             .map(|(id, c)| {
-                let fill = c.map(|c| c.to_ansi_color(&theme.terminal_colors().normal).into());
+                let fill = c.map(|c| c.to_ansi_color(theme.terminal_colors()).into());
                 (id, fill)
             })
             .collect();

@@ -385,8 +385,8 @@ fn set_tab_color_command_requires_argument() {
         .hint_text
         .expect("/set-tab-color hint text is set dynamically");
     for color in color_dot::TAB_COLOR_OPTIONS {
-        let lower = color.to_string().to_ascii_lowercase();
-        assert!(hint.contains(&lower), "hint should mention `{lower}`");
+        let lower = <&'static str>::from(color);
+        assert!(hint.contains(lower), "hint should mention `{lower}`");
     }
     assert!(hint.contains("none"), "hint should mention `none`");
 }
